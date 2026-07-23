@@ -110,13 +110,11 @@ def test_console_tour_is_an_accessible_offline_preview_without_live_actions() ->
     assert "hashchange" in markup
 
 
-def test_readme_tour_link_uses_live_pages_and_opens_a_new_tab() -> None:
+def test_readme_tour_link_uses_live_pages_url() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    expected = 'href="https://dandckr-ops.github.io/remote-dan-lite/console-tour.html"'
+    expected = "[Open the interactive console tour](https://dandckr-ops.github.io/remote-dan-lite/console-tour.html)"
 
     assert expected in readme
-    assert 'target="_blank"' in readme
-    assert 'rel="noopener noreferrer"' in readme
     assert "](docs/console-tour.html)" not in readme
 
 
