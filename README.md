@@ -76,7 +76,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full status vocabular
 
 ## Console tour
 
-[Open the interactive console tour](docs/console-tour.html) for a GitHub-friendly, self-contained documentation preview of all nine primary workspaces. It uses representative data and supports tab buttons, keyboard navigation, and hash deep links, but it is **not** the live appliance: it makes no appliance API calls and cannot access hardware, start captures, scan networks, or change routing.
+[Open the interactive console tour](https://dandckr-ops.github.io/remote-dan-lite/console-tour.html) for a GitHub-friendly, self-contained documentation preview of all nine primary workspaces. It uses representative data and supports tab buttons, keyboard navigation, and hash deep links, but it is **not** the live appliance: it makes no appliance API calls and cannot access hardware, start captures, scan networks, or change routing.
 
 ## Operator surface
 
