@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -28,11 +29,13 @@ from remote_dan.can_decode import (
     MAX_FRAMES_JSONL_BYTES,
     MAX_MANIFEST_BYTES,
     MAX_SCANNED_FRAME_LINES,
+    MAX_SOURCE_BYTES,
     MAX_SUMMARY_BYTES,
     RUN_ID_PATTERN,
     CanDecodeManager,
     CanDecodeRequest,
     CanDecodeSourceNotFound,
+    bus_survey_fast_sample_count,
     eligible_bus_survey_classification,
     read_authoritative_artifact,
     validated_artifact_path,
@@ -178,6 +181,12 @@ def _valid_can_decode_document(document: object, run_id: str) -> bool:
         return False
     source_run_id = document.get("source_run_id")
     source_capture_id = document.get("source_capture_id")
+    source_capture_type = document.get("source_capture_type")
+    source_profile = document.get("source_profile")
+    source_artifact = document.get("source_artifact")
+    source_sha256 = document.get("source_sha256")
+    source_manifest_sha256 = document.get("source_manifest_sha256")
+    source_parent_samples = document.get("source_parent_samples")
     source_samples = document.get("source_samples")
     frame_count = document.get("frame_count")
     identifier_count = document.get("identifier_count")
@@ -191,6 +200,16 @@ def _valid_can_decode_document(document: object, run_id: str) -> bool:
         and isinstance(source_capture_id, int)
         and not isinstance(source_capture_id, bool)
         and source_capture_id > 0
+        and source_capture_type in {"bus_survey", "can", "scope"}
+        and (source_profile is None or isinstance(source_profile, str))
+        and source_artifact in {"fast.csv", "capture.csv"}
+        and isinstance(source_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", source_sha256) is not None
+        and isinstance(source_manifest_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", source_manifest_sha256) is not None
+        and isinstance(source_parent_samples, int)
+        and not isinstance(source_parent_samples, bool)
+        and source_parent_samples > 0
         and isinstance(source_samples, int)
         and not isinstance(source_samples, bool)
         and source_samples > 0
@@ -710,6 +729,12 @@ def create_app(
             identity_fields = (
                 "source_run_id",
                 "source_capture_id",
+                "source_capture_type",
+                "source_profile",
+                "source_artifact",
+                "source_sha256",
+                "source_manifest_sha256",
+                "source_parent_samples",
                 "source_samples",
                 "can_polarity",
                 "nominal_bitrate_bps",
@@ -724,13 +749,77 @@ def create_app(
             ):
                 raise OSError("not a CAN decode")
             source_record = database.get_capture_by_run_id(str(manifest["source_run_id"]))
+            recorded_source_profile = (
+                source_record.get("metadata", {}).get("profile")
+                if source_record is not None
+                else None
+            )
             if (
                 source_record is None
                 or source_record.get("status") != "complete"
                 or source_record.get("id") != manifest["source_capture_id"]
-                or source_record.get("samples") != manifest["source_samples"]
+                or source_record.get("capture_type") != manifest["source_capture_type"]
+                or source_record.get("samples") != manifest["source_parent_samples"]
+                or (
+                    recorded_source_profile is not None
+                    and recorded_source_profile != manifest["source_profile"]
+                )
+                or (
+                    manifest["source_capture_type"] != "bus_survey"
+                    and recorded_source_profile != manifest["source_profile"]
+                )
             ):
                 raise OSError("CAN decode parent lineage is not authoritative")
+            source_manifest_bytes = read_authoritative_artifact(
+                capture_dir, source_record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
+            )
+            source_bytes = read_authoritative_artifact(
+                capture_dir, source_record, str(manifest["source_artifact"]),
+                max_bytes=MAX_SOURCE_BYTES,
+            )
+            source_manifest = json.loads(source_manifest_bytes)
+            if (
+                hashlib.sha256(source_manifest_bytes).hexdigest()
+                != manifest["source_manifest_sha256"]
+                or hashlib.sha256(source_bytes).hexdigest() != manifest["source_sha256"]
+                or not isinstance(source_manifest, dict)
+                or source_manifest.get("run_id") != manifest["source_run_id"]
+                or source_manifest.get("capture_type") != manifest["source_capture_type"]
+                or source_manifest.get("profile") != manifest["source_profile"]
+                or not isinstance(source_manifest.get("sha256"), dict)
+                or source_manifest["sha256"].get(manifest["source_artifact"])
+                != manifest["source_sha256"]
+            ):
+                raise OSError("CAN decode parent artifacts are not authoritative")
+            source_type = str(manifest["source_capture_type"])
+            source_profile = manifest["source_profile"]
+            expected_source_artifact = "capture.csv"
+            if source_type == "bus_survey":
+                expected_source_artifact = "fast.csv"
+                source_summary = source_manifest.get("summary")
+                classification = (
+                    source_summary.get("classification", {})
+                    if isinstance(source_summary, dict)
+                    else {}
+                )
+                if not eligible_bus_survey_classification(classification):
+                    raise OSError("CAN decode parent is no longer eligible")
+                if (
+                    source_manifest.get("samples") != manifest["source_parent_samples"]
+                    or bus_survey_fast_sample_count(source_manifest)
+                    != manifest["source_samples"]
+                ):
+                    raise OSError("CAN decode bus survey sample authority is inconsistent")
+            elif source_type == "can":
+                if manifest["source_parent_samples"] != manifest["source_samples"]:
+                    raise OSError("CAN decode parent sample authority is inconsistent")
+            elif source_type == "scope" and source_profile == "network":
+                if manifest["source_parent_samples"] != manifest["source_samples"]:
+                    raise OSError("CAN decode parent sample authority is inconsistent")
+            else:
+                raise OSError("CAN decode parent is no longer eligible")
+            if manifest["source_artifact"] != expected_source_artifact:
+                raise OSError("CAN decode parent artifact selection is inconsistent")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         all_identifiers = summary.get("identifiers", [])
@@ -1149,12 +1238,23 @@ def create_app(
 
     @app.get("/api/captures/{run_id}")
     def capture_manifest(run_id: str) -> dict[str, object]:
-        if not run_id or any(part in run_id for part in ("/", "\\", "..")):
-            raise HTTPException(status_code=404, detail="capture not found")
-        path = capture_dir / run_id / "manifest.json"
-        if not path.is_file():
-            raise HTTPException(status_code=404, detail="capture not found")
-        return json.loads(path.read_text(encoding="utf-8"))
+        record = database.get_capture_by_run_id(run_id)
+        try:
+            if record is None or record.get("status") != "complete":
+                raise ValueError("capture is not complete")
+            manifest = json.loads(read_authoritative_artifact(
+                capture_dir, record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
+            ))
+            if (
+                not isinstance(manifest, dict)
+                or manifest.get("run_id") != run_id
+                or manifest.get("capture_id") != record.get("id")
+                or manifest.get("capture_type") != record.get("capture_type")
+            ):
+                raise ValueError("capture manifest does not match authoritative SQLite")
+            return manifest
+        except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
+            raise HTTPException(status_code=404, detail="capture not found") from None
 
     @app.get("/api/evidence/captures/{capture_id}")
     def evidence_capture(capture_id: int) -> dict[str, object]:

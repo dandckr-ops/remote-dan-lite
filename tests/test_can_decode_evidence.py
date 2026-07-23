@@ -233,12 +233,18 @@ def test_bus_survey_can_candidate_uses_fast_waveform(tmp_path: Path) -> None:
     database = EvidenceDatabase(tmp_path / "evidence.sqlite3")
     database.initialize()
     source_dir, capture_id = _source_capture(root, database, run_id="survey-can-001")
+    waveform_samples = int(database.get_capture(capture_id)["samples"])
+    parent_samples = waveform_samples + 300
     (source_dir / "capture.csv").rename(source_dir / "fast.csv")
     manifest = json.loads((source_dir / "manifest.json").read_text())
     manifest["capture_type"] = "bus_survey"
     manifest["profile"] = "bus-sniffer"
+    manifest["samples"] = parent_samples
     manifest["summary"] = {
-        "classification": {"family": "CAN-family", "confidence": "low", "workspace": "can"}
+        "classification": {"family": "CAN-family", "confidence": "low", "workspace": "can"},
+        "acquisition_provenance": {
+            "segments": [{"name": "fast", "samples": waveform_samples}]
+        },
     }
     manifest["sha256"] = {"fast.csv": _sha256(source_dir / "fast.csv")}
     (source_dir / "manifest.json").write_text(
@@ -247,8 +253,8 @@ def test_bus_survey_can_candidate_uses_fast_waveform(tmp_path: Path) -> None:
     )
     with database._connect() as connection:
         connection.execute(
-            "UPDATE captures SET capture_type = 'bus_survey', metadata_json = ? WHERE id = ?",
-            (json.dumps({"profile": "bus-sniffer"}), capture_id),
+            "UPDATE captures SET capture_type = 'bus_survey', samples = ?, metadata_json = ? WHERE id = ?",
+            (parent_samples, json.dumps({}), capture_id),
         )
     _refresh_artifact_record(database, capture_id, source_dir, "fast.csv")
     _refresh_artifact_record(database, capture_id, source_dir, "manifest.json")
@@ -258,6 +264,9 @@ def test_bus_survey_can_candidate_uses_fast_waveform(tmp_path: Path) -> None:
     )
 
     assert decoded["source_artifact"] == "fast.csv"
+    assert decoded["source_samples"] == waveform_samples
+    assert decoded["source_parent_samples"] == parent_samples
+    assert decoded["source_profile"] == "bus-sniffer"
     assert decoded["frame_count"] == 3
 
 
@@ -583,4 +592,43 @@ def test_authoritative_read_rejects_intermediate_run_directory_swap(
 
     monkeypatch.setattr(os, "open", racing_open)
     with pytest.raises(ValueError, match="replaced|symlink|cannot be opened"):
+        read_authoritative_artifact(root, record, "manifest.json", max_bytes=1024)
+
+
+def test_authoritative_read_rejects_capture_root_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = tmp_path / "holder"
+    root = holder / "captures"
+    run_id = "root-swap-source"
+    run_dir = root / run_id
+    outside_root = tmp_path / "outside-captures"
+    run_dir.mkdir(parents=True)
+    (outside_root / run_id).mkdir(parents=True)
+    expected = b'{"trusted":true}\n'
+    (run_dir / "manifest.json").write_bytes(expected)
+    (outside_root / run_id / "manifest.json").write_bytes(expected)
+    record = {
+        "run_id": run_id,
+        "artifacts": [{
+            "filename": "manifest.json",
+            "relative_path": f"{run_id}/manifest.json",
+            "size_bytes": len(expected),
+            "sha256": hashlib.sha256(expected).hexdigest(),
+        }],
+    }
+    original_open = os.open
+    swapped = False
+
+    def racing_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal swapped
+        if not swapped and str(path) == run_id:
+            swapped = True
+            root.rename(holder / "captures.saved")
+            root.symlink_to(outside_root, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", racing_open)
+    with pytest.raises(ValueError, match="root.*replaced|symlink|cannot be opened"):
         read_authoritative_artifact(root, record, "manifest.json", max_bytes=1024)

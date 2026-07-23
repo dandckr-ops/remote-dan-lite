@@ -20,6 +20,64 @@ class FakePicoBackend(SimulatorBackend):
     name = "ps2000a"
 
 
+def _register_authoritative_can_parent(
+    app: object,
+    capture_root: Path,
+    *,
+    run_id: str,
+    samples: int,
+) -> dict[str, object]:
+    database = app.state.database
+    source_dir = capture_root / run_id
+    source_dir.mkdir(parents=True, exist_ok=True)
+    waveform = b"time_us,vbat_v,can_h_v,can_l_v\n0,12,3.5,1.5\n"
+    waveform_sha = hashlib.sha256(waveform).hexdigest()
+    (source_dir / "capture.csv").write_bytes(waveform)
+    capture_id = database.create_capture(
+        run_id=run_id,
+        captured_at="2026-07-23T11:59:00+00:00",
+        capture_type="can",
+        label="authoritative source",
+        backend="test",
+        samples=samples,
+        metadata={"profile": "network"},
+    )
+    manifest = {
+        "run_id": run_id,
+        "capture_id": capture_id,
+        "capture_type": "can",
+        "profile": "network",
+        "sha256": {"capture.csv": waveform_sha},
+    }
+    manifest_bytes = json.dumps(manifest, sort_keys=True).encode()
+    (source_dir / "manifest.json").write_bytes(manifest_bytes)
+    registrations = []
+    for filename, content, media_type in (
+        ("capture.csv", waveform, "text/csv"),
+        ("manifest.json", manifest_bytes, "application/json"),
+    ):
+        registrations.append({
+            "kind": "source",
+            "filename": filename,
+            "relative_path": f"{run_id}/{filename}",
+            "media_type": media_type,
+            "size_bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        })
+    database.complete_capture_with_artifacts(capture_id, registrations)
+    return {
+        "source_run_id": run_id,
+        "source_capture_id": capture_id,
+        "source_capture_type": "can",
+        "source_profile": "network",
+        "source_artifact": "capture.csv",
+        "source_sha256": waveform_sha,
+        "source_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "source_parent_samples": samples,
+        "source_samples": samples,
+    }
+
+
 def test_status_reports_degraded_hardware_and_available_simulator(tmp_path: Path) -> None:
     app = create_app(data_dir=tmp_path, hardware_probe=lambda: {
         "driver_available": False,
@@ -155,6 +213,30 @@ def test_api_can_trigger_and_list_a_simulated_capture(tmp_path: Path) -> None:
     artifact = client.get(f"/artifacts/{manifest['run_id']}/summary.json")
     assert artifact.status_code == 200
     assert artifact.json()["backend"] == "simulator"
+
+
+def test_capture_detail_requires_complete_authoritative_manifest(tmp_path: Path) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    created = client.post("/api/captures", json={
+        "label": "capture detail authority",
+        "preset": "short",
+        "mode": "simulator",
+    })
+    assert created.status_code == 201
+    manifest = created.json()
+    run_id = manifest["run_id"]
+    capture_id = manifest["capture_id"]
+    assert client.get(f"/api/captures/{run_id}").status_code == 200
+
+    app.state.database.set_capture_status(capture_id, "pending")
+    assert client.get(f"/api/captures/{run_id}").status_code == 404
+    app.state.database.set_capture_status(capture_id, "complete")
+
+    manifest_path = capture_root / run_id / "manifest.json"
+    manifest_path.write_text(manifest_path.read_text() + " ", encoding="utf-8")
+    assert client.get(f"/api/captures/{run_id}").status_code == 404
 
 
 def test_artifact_delivery_requires_complete_authoritative_registration(
@@ -562,6 +644,52 @@ def test_can_decode_api_lists_sources_creates_child_and_returns_bounded_rows(
     assert client.get(f"/api/can-decodes/{child['run_id']}").status_code == 404
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ("waveform_file", "manifest_file", "capture_type", "profile", "artifact_hash"),
+)
+def test_can_decode_result_revalidates_authoritative_parent_chain(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "parent revalidation source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    child_response = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"],
+        "label": "parent revalidation child",
+    })
+    assert child_response.status_code == 201
+    child = child_response.json()
+    assert client.get(f"/api/can-decodes/{child['run_id']}").status_code == 200
+    source_id = int(source["capture_id"])
+    if mutation == "waveform_file":
+        with (capture_root / source["run_id"] / "capture.csv").open("a") as handle:
+            handle.write("0,0,0,0\n")
+    elif mutation == "manifest_file":
+        with (capture_root / source["run_id"] / "manifest.json").open("a") as handle:
+            handle.write(" ")
+    elif mutation == "capture_type":
+        with app.state.database._connect() as connection:
+            connection.execute("UPDATE captures SET capture_type = 'serial' WHERE id = ?", (source_id,))
+    elif mutation == "profile":
+        app.state.database.set_capture_metadata(source_id, {"profile": "general"})
+    else:
+        with app.state.database._connect() as connection:
+            connection.execute(
+                "UPDATE artifacts SET sha256 = ? WHERE capture_id = ? AND filename = 'capture.csv'",
+                ("0" * 64, source_id),
+            )
+    assert client.get(f"/api/can-decodes/{child['run_id']}").status_code == 404
+
+
 def test_can_decode_source_listing_requires_complete_matching_sqlite_rows(
     tmp_path: Path,
 ) -> None:
@@ -647,15 +775,9 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         data_dir=capture_root,
         db_path=tmp_path / "evidence.sqlite3",
     )
-    source_capture_id = app.state.database.create_capture(
-        run_id="synthetic-source",
-        captured_at="2026-07-23T11:59:00+00:00",
-        capture_type="can",
-        label="synthetic source",
-        backend="test",
-        samples=3_000,
+    source_identity = _register_authoritative_can_parent(
+        app, capture_root, run_id="synthetic-source", samples=3_000,
     )
-    app.state.database.complete_capture_with_artifacts(source_capture_id, [])
     frames = [
         {
             "identifier": 0x100,
@@ -697,9 +819,7 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
     document_identity = {
         "run_id": run_id,
         "capture_type": "can_decode",
-        "source_run_id": "synthetic-source",
-        "source_capture_id": source_capture_id,
-        "source_samples": 3_000,
+        **source_identity,
         "can_polarity": "expected",
         "nominal_bitrate_bps": 500_000,
         "writes_performed": 0,
@@ -903,15 +1023,9 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
     run_dir = capture_root / run_id
     run_dir.mkdir(parents=True)
     app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
-    source_capture_id = app.state.database.create_capture(
-        run_id="authoritative-source",
-        captured_at="2026-07-23T11:59:00+00:00",
-        capture_type="can",
-        label="authoritative source",
-        backend="test",
-        samples=1_000,
+    source_identity = _register_authoritative_can_parent(
+        app, capture_root, run_id="authoritative-source", samples=1_000,
     )
-    app.state.database.complete_capture_with_artifacts(source_capture_id, [])
     frames = [
         {
             "identifier": 0x321,
@@ -934,9 +1048,7 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
     document_identity = {
         "run_id": run_id,
         "capture_type": "can_decode",
-        "source_run_id": "authoritative-source",
-        "source_capture_id": source_capture_id,
-        "source_samples": 1_000,
+        **source_identity,
         "can_polarity": "expected",
         "nominal_bitrate_bps": 500_000,
         "writes_performed": 0,

@@ -101,11 +101,15 @@ def read_authoritative_artifact(
         | getattr(os, "O_CLOEXEC", 0)
     )
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    root_parent_descriptor: int | None = None
     root_descriptor: int | None = None
     run_descriptor: int | None = None
     descriptor: int | None = None
     try:
-        root_descriptor = os.open(data_dir, directory_flags)
+        if not data_dir.is_absolute() or not data_dir.name:
+            raise ValueError("capture root must be an absolute named directory")
+        root_parent_descriptor = os.open(data_dir.parent, directory_flags)
+        root_descriptor = os.open(data_dir.name, directory_flags, dir_fd=root_parent_descriptor)
         root_stat = os.fstat(root_descriptor)
         if not stat.S_ISDIR(root_stat.st_mode):
             raise ValueError("capture root is not a directory")
@@ -129,6 +133,15 @@ def read_authoritative_artifact(
         if identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
             raise ValueError(f"authoritative artifact {filename} changed while reading")
         current_run = os.stat(run_id, dir_fd=root_descriptor, follow_symlinks=False)
+        current_root = os.stat(
+            data_dir.name, dir_fd=root_parent_descriptor, follow_symlinks=False
+        )
+        if (
+            not stat.S_ISDIR(current_root.st_mode)
+            or (current_root.st_dev, current_root.st_ino)
+            != (root_stat.st_dev, root_stat.st_ino)
+        ):
+            raise ValueError("capture root was replaced while reading")
         if (
             not stat.S_ISDIR(current_run.st_mode)
             or (current_run.st_dev, current_run.st_ino) != run_identity
@@ -147,7 +160,9 @@ def read_authoritative_artifact(
             raise ValueError("artifact symlinks are not allowed") from exc
         raise ValueError(f"authoritative artifact {filename} cannot be opened") from exc
     finally:
-        for opened_descriptor in (descriptor, run_descriptor, root_descriptor):
+        for opened_descriptor in (
+            descriptor, run_descriptor, root_descriptor, root_parent_descriptor,
+        ):
             if opened_descriptor is not None:
                 os.close(opened_descriptor)
     if len(data) != before.st_size:
@@ -200,6 +215,23 @@ def eligible_bus_survey_classification(classification: object) -> bool:
         classification.get("status") == "ambiguous"
         and topology == "Differential pair"
     )
+
+
+def bus_survey_fast_sample_count(manifest: object) -> int | None:
+    if not isinstance(manifest, dict):
+        return None
+    summary = manifest.get("summary")
+    provenance = summary.get("acquisition_provenance") if isinstance(summary, dict) else None
+    segments = provenance.get("segments") if isinstance(provenance, dict) else None
+    if not isinstance(segments, list):
+        return None
+    for segment in segments:
+        if not isinstance(segment, dict) or segment.get("name") != "fast":
+            continue
+        samples = segment.get("samples")
+        if isinstance(samples, int) and not isinstance(samples, bool) and samples > 0:
+            return samples
+    return None
 
 
 class CanDecodeManager:
@@ -268,7 +300,9 @@ class CanDecodeManager:
         if source_record.get("capture_type") != capture_type:
             raise ValueError("source capture type does not match authoritative SQLite")
         recorded_profile = source_record.get("metadata", {}).get("profile")
-        if recorded_profile != profile:
+        if recorded_profile is not None and recorded_profile != profile:
+            raise ValueError("source profile does not match authoritative SQLite")
+        if capture_type != "bus_survey" and recorded_profile != profile:
             raise ValueError("source profile does not match authoritative SQLite")
         if capture_type == "bus_survey":
             classification = source_manifest.get("summary", {}).get("classification", {})
@@ -288,6 +322,7 @@ class CanDecodeManager:
         source_artifact_record = _artifact_by_filename(source_record, source_artifact)
         assert source_artifact_record is not None
         source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+        source_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
         recorded_hashes = source_manifest.get("sha256")
         recorded_source_hash = (
             recorded_hashes.get(source_artifact)
@@ -297,12 +332,21 @@ class CanDecodeManager:
         if recorded_source_hash != source_sha256:
             raise ValueError("source waveform hash does not match its immutable manifest")
         time_us, can_h, can_l = self._load_waveform_bytes(source_bytes)
-        source_samples = source_record.get("samples")
+        source_samples = int(time_us.size)
+        source_parent_samples = source_record.get("samples")
         if (
-            not isinstance(source_samples, int)
-            or isinstance(source_samples, bool)
-            or source_samples != int(time_us.size)
+            not isinstance(source_parent_samples, int)
+            or isinstance(source_parent_samples, bool)
+            or source_parent_samples <= 0
         ):
+            raise ValueError("source parent sample count is not authoritative")
+        if capture_type == "bus_survey":
+            if (
+                source_manifest.get("samples") != source_parent_samples
+                or bus_survey_fast_sample_count(source_manifest) != source_samples
+            ):
+                raise ValueError("bus survey sample counts are not authoritative")
+        elif source_parent_samples != source_samples:
             raise ValueError("source sample count does not match authoritative SQLite")
         decoded = decode_can_waveform(time_us, can_h, can_l)
         frames = sorted(
@@ -352,9 +396,13 @@ class CanDecodeManager:
             "parent_run_id": request.source_run_id,
             "source_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
             "parent_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
+            "source_capture_type": capture_type,
+            "source_profile": profile,
+            "source_parent_samples": source_parent_samples,
             "source_samples": source_samples,
             "source_artifact": source_artifact,
             "source_sha256": source_sha256,
+            "source_manifest_sha256": source_manifest_sha256,
             "decoder": settings,
             "can_polarity": decoded["polarity"],
             "nominal_bitrate_bps": decoded["nominal_bitrate_bps"],
