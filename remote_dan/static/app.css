@@ -156,6 +156,16 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .can-capture-panel { margin-bottom: 18px; }
 .can-capture-form { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(150px, .55fr) minmax(150px, .55fr) minmax(220px, .7fr); align-items: end; gap: 12px; padding: 18px 20px; }
 .can-capture-form .capture-button { grid-column: auto; min-height: 44px; }
+.serial-capture-panel { margin-bottom: 18px; }
+.serial-capture-form { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(6, minmax(100px, .55fr)); align-items: end; gap: 12px; padding: 18px 20px; }
+.serial-capture-form .capture-button { grid-column: 1 / -1; min-height: 44px; }
+.serial-preview { margin-top: 0; }
+.serial-decode-grid { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--rule); }
+.serial-decode-grid article { min-width: 0; padding: 18px 20px; border-right: 1px solid var(--rule); }
+.serial-decode-grid article:last-child { border-right: 0; }
+.serial-decode-grid span { display: block; margin-bottom: 10px; color: var(--amber); font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
+.serial-decode-grid pre { min-height: 120px; max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cream); font: 11px/1.55 var(--mono); }
+.serial-analysis-panel { margin-top: 18px; }
 .can-evidence-layout { display: grid; }
 .can-battery-gauge { min-height: 245px; display: grid; grid-template-columns: minmax(220px, .32fr) minmax(300px, .44fr) minmax(300px, 1fr); align-items: stretch; border-bottom: 1px solid var(--rule); background: radial-gradient(circle at 43% 46%, rgba(255, 188, 66, .09), transparent 55%); }
 .can-battery-gauge .scope-gauge-label { align-items: flex-start; justify-content: center; flex-direction: column; border-right: 1px solid var(--rule); border-bottom: 0; }
@@ -256,6 +266,8 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .can-capture-form { grid-template-columns: 1fr 1fr; }
   .can-capture-form .capture-button { grid-column: 1 / -1; }
+  .serial-capture-form { grid-template-columns: 1fr 1fr; }
+  .serial-label, .serial-capture-form .capture-button { grid-column: 1 / -1; }
   .overview-grid { grid-template-columns: 1fr 1fr; }
   .workflow-card { grid-column: 1 / -1; }
   .can-battery-gauge { grid-template-columns: minmax(200px, .42fr) minmax(280px, .58fr); }
@@ -305,8 +317,11 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .profile-button, .profile-button:nth-child(3) { border-right: 1px solid var(--rule); }
   .profile-button:nth-child(2n) { border-right: 0; }
   .profile-button:last-child { grid-column: 1 / -1; border-right: 0; }
-  .scope-capture-form, .can-capture-form { grid-template-columns: 1fr; }
-  .scope-label-field, .capture-button, .can-capture-form .capture-button { grid-column: 1; }
+  .scope-capture-form, .can-capture-form, .serial-capture-form { grid-template-columns: 1fr; }
+  .scope-label-field, .capture-button, .can-capture-form .capture-button, .serial-label, .serial-capture-form .capture-button { grid-column: 1; }
+  .serial-decode-grid { grid-template-columns: 1fr; }
+  .serial-decode-grid article { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .serial-decode-grid article:last-child { border-bottom: 0; }
   .scope-tools { grid-template-columns: 1fr; }
   .channel-fields { grid-template-columns: 1fr; }
   .channel-config.disabled > .field, .channel-config.disabled > .channel-fields { display: none; }

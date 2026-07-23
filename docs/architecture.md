@@ -18,7 +18,7 @@ At the current repository baseline:
 - Passive CAN analysis is **hardware-path proven** at a negotiated 0.104 µs sample interval over all three commissioned channels with no overflow.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
 - SQLite metadata and evidence lineage are **proven live**.
-- Seven session-centered tabs are **proven live** and share one evidence state; Serial and guided-test acquisition remain commissioning boundaries.
+- Seven session-centered tabs are **proven live** and share one evidence state. The Serial receive lane is **in governed source and simulator-proven**; its first real C662 capture and guided-test acquisition remain commissioning boundaries.
 - Profile-driven Scope acquisition is **hardware-preflight proven** on the real 2406B, including a 10-second capture and model-accepted ranges from ±20 mV through ±20 V.
 - The Anybus AB7702 is a **connected satellite**; Remote Dan integration is pending.
 - The complete three-device enclosure and independent recovery hardware remain an architecture target.
@@ -119,6 +119,19 @@ The persisted analysis separates measurement from inference:
 - Pico overflow, too few samples per bit, no activity, and ambiguous timing fail closed or lower confidence.
 
 The analysis is passive and listen-only. It does not transmit, acknowledge, replay, fuzz, or actively probe the bus. A short observation window describes only traffic seen during that window; absence of CAN FD or a protocol fingerprint does not prove the vehicle or network cannot use it elsewhere.
+
+### Passive Serial boundary
+
+The Serial lane preserves raw receive bytes, timestamped userspace read chunks, decoded text/hex, receiver error counters, a timing plot, report, checksum manifest, and SQLite capture/artifact lineage. Protocol fingerprints are fail-closed:
+
+- SEL ASCII requires prompt grammar plus structured identity fields for high confidence;
+- SEL Fast Message requires `A5 46`, exact length, recognized function, and CRC-16;
+- Modbus RTU requires legal address/function/length and CRC-16, while high confidence also requires trustworthy frame boundaries and multiple nonidentical frames;
+- DNP3 requires link length/control semantics plus header and payload-block CRCs;
+- IEC 60870-5-101 requires complete fixed/variable frame structure and checksum;
+- one checksum-valid frame remains a candidate, and silence does not infer baud, parity, or protocol.
+
+The Linux implementation is application receive-only, not electrically isolated. `O_RDONLY` blocks application writes on that descriptor, but CP210x TXD remains an output and DTR/RTS can transition during open, configure, enumeration, reset, close, or unplug. Production passive wiring therefore connects only RXD and a verified-safe reference; TXD, DTR, RTS, and all other outputs remain physically disconnected and insulated. Userspace USB read timestamps are retained honestly as chunk timing and are not represented as per-character edge timing.
 
 ### Guided tests
 

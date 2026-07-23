@@ -83,6 +83,28 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
         "scope-primary-value",
         "scope-primary-detail",
         "scope-overview",
+        "serial-capture-form",
+        "serial-capture-button",
+        "serial-message",
+        "serial-duration",
+        "serial-mode",
+        "serial-baud",
+        "serial-data-bits",
+        "serial-parity",
+        "serial-stop-bits",
+        "serial-overview",
+        "serial-text-preview",
+        "serial-hex-preview",
+        "serial-analysis-status",
+        "serial-byte-count",
+        "serial-byte-rate",
+        "serial-framing",
+        "serial-protocol",
+        "serial-valid-frames",
+        "serial-printable",
+        "serial-errors",
+        "serial-confidence",
+        "serial-analysis-detail",
         "can-capture-form",
         "can-capture-button",
         "can-message",
@@ -107,6 +129,7 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
     index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     overview_markup = index.split('id="panel-overview"', 1)[1].split('id="panel-scope"', 1)[0]
     can_markup = index.split('id="panel-can"', 1)[1].split('id="panel-tests"', 1)[0]
+    serial_markup = index.split('id="panel-serial"', 1)[1].split('id="panel-can"', 1)[0]
     assert "data-vbat-value" not in overview_markup
     assert "data-vbat-detail" not in overview_markup
     assert "Battery voltage" not in overview_markup
@@ -119,6 +142,11 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
     assert 'value="can-analysis"' in can_markup
     assert "Bus load" in can_markup
     assert "Protocol fingerprint" in can_markup
+    assert "RX only" in serial_markup
+    assert "Configured framing" in serial_markup
+    assert "Protocol fingerprint" in serial_markup
+    assert "transmit" not in serial_markup.lower()
+    assert serial_markup.index('id="serial-overview"') < serial_markup.index('id="serial-analysis-status"')
     assert index.count("data-vbat-value") == 1
     assert index.count("data-vbat-detail") == 1
     assert index.count("data-scope-profile=") == 5
@@ -158,6 +186,8 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert "function suggestScopeRange" in script
     assert "function bindScopeCaptureForm" in script
     assert "function bindCanCaptureForm" in script
+    assert "function bindSerialCaptureForm" in script
+    assert "function showSerial" in script
     assert "function showCanAnalysis" in script
     assert "function formatBitrate" in script
     assert 'profile: "network"' in script

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=can-intelligence-1">
+  <link rel="stylesheet" href="/static/app.css?v=serial-intelligence-1">
 </head>
 <body>
   <div class="shell">
@@ -192,12 +192,43 @@
       </section>
 
       <section class="tab-panel" id="panel-serial" role="tabpanel" aria-labelledby="tab-serial" data-panel="serial" hidden>
-        <section class="panel commissioned-panel">
-          <div class="panel-heading"><div><span class="section-number">03</span><h2>Serial acquisition</h2></div><span class="status-label planned">Not commissioned</span></div>
-          <div class="commissioned-body">
-            <div><p class="lead">The tab is active; the serial acquisition lane is intentionally not pretending to be ready.</p><p>Raw electrical and timing evidence will use a direct isolated serial adapter or Pico lane. Structured protocol gateways remain separate satellites.</p></div>
-            <dl class="boundary-list"><div><dt>Planned roles</dt><dd>SEL / RS-232 · RS-485 tap</dd></div><div><dt>Initial authority</dt><dd>Receive-only</dd></div><div><dt>Evidence target</dt><dd>Bytes · timing · framing · CRC</dd></div></dl>
+        <section class="panel serial-capture-panel">
+          <div class="panel-heading"><div><span class="section-number">03</span><h2>SEL serial receive capture</h2></div><span class="status-label planned" id="serial-device-status">Checking C662</span></div>
+          <form id="serial-capture-form" class="serial-capture-form">
+            <label class="field serial-label"><span>Evidence label</span><input id="serial-label" maxlength="80" value="SEL serial receive proof" autocomplete="off"></label>
+            <label class="field"><span>Duration</span><select id="serial-duration"><option value="1">1 second</option><option value="2">2 seconds</option><option value="5" selected>5 seconds</option><option value="10">10 seconds</option><option value="30">30 seconds</option></select></label>
+            <label class="field"><span>Source</span><select id="serial-mode"><option value="auto">Auto</option><option value="hardware">SEL C662 hardware</option><option value="simulator">Simulator</option></select></label>
+            <label class="field"><span>Baud</span><select id="serial-baud"><option>300</option><option>600</option><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option></select></label>
+            <label class="field"><span>Data bits</span><select id="serial-data-bits"><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
+            <label class="field"><span>Parity</span><select id="serial-parity"><option value="N" selected>None</option><option value="E">Even</option><option value="O">Odd</option></select></label>
+            <label class="field"><span>Stop bits</span><select id="serial-stop-bits"><option value="1" selected>1</option><option value="2">2</option></select></label>
+            <button class="capture-button" id="serial-capture-button" type="submit"><span class="button-mark"></span>Capture RX only</button>
+          </form>
+          <div class="message" id="serial-message" aria-live="polite">RX only through the SEL C662. Framing shown below is configured unless explicitly marked inferred.</div>
+        </section>
+
+        <section class="preview panel serial-preview">
+          <div class="panel-heading"><div><span class="section-number">03A</span><h2>Byte timing evidence</h2></div><a id="serial-latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a></div>
+          <div class="scope-grid"><div class="empty-preview" id="serial-empty-preview"><div class="reticle"></div><strong>No serial evidence loaded</strong><span>Capture a receive window from the C662 or simulator.</span></div><img id="serial-overview" class="overview hidden" alt="Latest received serial bytes plotted over capture time"></div>
+          <div class="serial-decode-grid">
+            <article><span>Text preview</span><pre id="serial-text-preview">No decoded text.</pre></article>
+            <article><span>Hex preview</span><pre id="serial-hex-preview">No received bytes.</pre></article>
           </div>
+        </section>
+
+        <section class="panel serial-analysis-panel" aria-labelledby="serial-analysis-heading">
+          <div class="panel-heading"><div><span class="section-number">03B</span><h2 id="serial-analysis-heading">Passive serial analysis</h2></div><span class="status-label planned" id="serial-analysis-status">No analysis</span></div>
+          <div class="can-analysis-grid serial-analysis-grid">
+            <article class="analysis-metric load"><span>Received bytes</span><strong id="serial-byte-count">—</strong><small>RX evidence retained</small></article>
+            <article class="analysis-metric"><span>Byte rate</span><strong id="serial-byte-rate">—</strong><small>bytes / second observed</small></article>
+            <article class="analysis-metric"><span>Configured framing</span><strong id="serial-framing">—</strong><small>baud · data · parity · stop</small></article>
+            <article class="analysis-metric protocol"><span>Protocol fingerprint</span><strong id="serial-protocol">—</strong><small>Validated structure / checksum</small></article>
+            <article class="analysis-metric"><span>Validated frames</span><strong id="serial-valid-frames">—</strong><small>Checksum-valid where supported</small></article>
+            <article class="analysis-metric"><span>Printable content</span><strong id="serial-printable">—</strong><small>% of received bytes</small></article>
+            <article class="analysis-metric"><span>Receiver errors</span><strong id="serial-errors">—</strong><small>Parity / framing / break</small></article>
+            <article class="analysis-metric"><span>Analysis confidence</span><strong id="serial-confidence">—</strong><small>Evidence-dependent</small></article>
+          </div>
+          <div class="analysis-detail"><strong>Interpretation boundary</strong><p id="serial-analysis-detail">A configured baud or parity is not automatically detected. Protocol names require validated byte structure, checksum evidence, or an explicit SEL identity and terminal prompt.</p></div>
         </section>
       </section>
 
@@ -275,6 +306,6 @@
 
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
-  <script src="/static/app.js?v=can-intelligence-1" defer></script>
+  <script src="/static/app.js?v=serial-intelligence-1" defer></script>
 </body>
 </html>

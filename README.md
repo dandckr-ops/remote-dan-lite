@@ -27,7 +27,8 @@ This repository deliberately separates proven behavior from source-complete and 
 | Configurable Scope workspace | **Hardware-preflight proven** | The real 2406B accepted profile-driven A–D enable state, AC/DC coupling, ±20 mV through ±20 V input ranges, 1:1/10:1/20:1 scaling, and a 10-second 250,000-sample capture. Secondary ignition requires a capacitive pickup and never a direct secondary connection. |
 | Artifact generation | **Proven** | Each run produces CSV, JSON, PNG, PDF, and a checksum manifest. |
 | SQLite evidence index | **Proven live** | The appliance preserves capture/artifact lineage locally while waveform and report files remain ordinary filesystem artifacts. |
-| Session-centered tabs | **Proven live** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Serial and guided-test acquisition remain explicit commissioning boundaries. |
+| Passive Serial receive lane | **In governed source; simulator proven** | RX-only capture, termios framing, raw/timing evidence, SQLite lineage, and conservative SEL ASCII, SEL Fast Message, Modbus RTU, DNP3, and IEC-101 fingerprints are tested. The C662 is discovered on the appliance, but the first real receive capture remains a commissioning gate. |
+| Session-centered tabs | **Proven live** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Guided-test acquisition remains an explicit commissioning boundary. |
 | Anybus AB7702 Modbus satellite | **Connected satellite** | The gateway is configured and reachable for Modbus TCP/RTU. Remote Dan API/UI integration is still pending. |
 | OOB recovery node and field enclosure | **Architecture target** | These remain part of the three-plane appliance design, not a claim that the finished enclosure is commissioned. |
 
@@ -42,6 +43,8 @@ A bounded Pico capture creates a timestamped evidence directory containing:
 - `manifest.json` — run identity, backend, channels, artifact list, and SHA-256 checksums
 
 Simulator data is always labeled `simulator`. Hardware mode fails closed when the native PS2000A driver or Pico USB device is unavailable.
+
+A Serial run produces `capture.bin`, timestamped `chunks.jsonl`, `transcript.txt`, `summary.json`, `overview.png`, `report.pdf`, and `manifest.json`. `capture.bin` preserves the original PARMRK stream; decoded bytes and error markers remain distinguishable in the timing sidecar.
 
 ## Architecture
 
@@ -77,6 +80,8 @@ Connections and System remain secondary setup surfaces. Tabs configure or inspec
 **Scope** is the configurable physical-signal workspace. It provides General, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary starting profiles; 40 ms through 10 s windows; four channel enable/label controls; AC/DC coupling; model-proven input ranges; probe scaling; and bounded next-capture auto-range suggestions.
 
 **CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. Its analysis window samples the passive pair at approximately 10 MS/s and reports observed occupancy, nominal bitrate, CAN versus CAN FD header evidence, BRS data rate when resolvable, identifier width, frame activity, physical-layer measurements, and confidence-ranked protocol fingerprints. J1939, NMEA 2000, OBD-II/ISO-TP, and CANopen names require CRC-valid Classical CAN frames plus their identifier/PGN patterns; bitrate or voltage shape alone is never treated as proof. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
+
+**Serial** is receive-only in the application. It opens the exact C662 `/dev/serial/by-id` identity with `O_RDONLY`, raw mode, exclusive tty ownership, no software/hardware flow control, and DTR/RTS deassertion where supported. That is not electrical isolation: CP210x TXD is still driven and DTR/RTS can pulse during open or USB lifecycle events. A genuinely passive field connection requires only RXD and a verified-safe reference; TXD, DTR, RTS, and other outputs must be physically disconnected and insulated. Baud/parity are reported as operator-configured unless independently inferred. USB read chunks are not treated as proof of Modbus RTU silent intervals.
 
 Guided tests such as relative compression and cylinder contribution belong under **Tests**. They configure reusable capture engines and preserve the raw evidence, calculations, confidence, and operator interpretation.
 
@@ -182,6 +187,8 @@ git diff --check
 - [ ] session/asset/case APIs and dashboard selectors
 - [x] tabbed Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence UI
 - [x] digital VBAT presentation alongside CAN-only network waveform review
+- [x] governed RX-only Serial capture, evidence packaging, and protocol fingerprints
+- [ ] commission and verify the first real C662 receive capture
 - [ ] read-only Anybus Modbus satellite integration and transaction logging
 - [ ] synchronized serial/CAN/event-marker correlation
 - [ ] guided relative-compression and cylinder-contribution workflows

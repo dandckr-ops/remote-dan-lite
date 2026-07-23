@@ -109,6 +109,9 @@ async function refreshStatus() {
     $("#driver").textContent = status.hardware.driver_available ? "available" : "not installed";
     $("#device").textContent = status.hardware.device_present ? "detected" : "not attached";
     $("#hardware-note").textContent = status.hardware.reason;
+    const serial = status.serial_hardware || {};
+    $("#serial-device-status").textContent = serial.device_present ? "C662 ready" : "C662 absent";
+    $("#serial-device-status").className = `status-label ${serial.device_present ? "live" : "error"}`;
   } catch (error) {
     $("#service-state").classList.remove("ready");
     $("#service-state span").textContent = "Service unavailable";
@@ -285,6 +288,51 @@ function showLatestMetadata(run) {
   $("#latest-time").textContent = formatTimestamp(run.captured_at);
 }
 
+function isSerialRun(run) {
+  return run?.capture_type === "serial" || run?.profile === "serial";
+}
+
+function showSerial(run) {
+  if (!run) return;
+  const analysis = run.summary?.serial_analysis;
+  setImage($("#serial-overview"), $("#serial-empty-preview"), run);
+  const report = $("#serial-latest-report");
+  report.href = artifactUrl(run, "report.pdf");
+  report.classList.remove("hidden");
+  if (!analysis) return;
+
+  const errors = analysis.receiver_errors || {};
+  const errorTotal = Object.values(errors).reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const protocol = analysis.protocol || {};
+  $("#serial-byte-count").textContent = Number(analysis.byte_count || 0).toLocaleString();
+  $("#serial-byte-rate").textContent = formatMetric(analysis.bytes_per_second, 1);
+  $("#serial-framing").textContent = analysis.framing?.label || "—";
+  $("#serial-protocol").textContent = protocol.name || "Higher layer unresolved";
+  $("#serial-valid-frames").textContent = Number(protocol.valid_frame_count || 0).toLocaleString();
+  $("#serial-printable").textContent = `${formatMetric(analysis.printable_percent, 1)}%`;
+  $("#serial-errors").textContent = errorTotal.toLocaleString();
+  $("#serial-confidence").textContent = (protocol.confidence || "none").toUpperCase();
+  $("#serial-text-preview").textContent = analysis.text_preview || "No decoded text.";
+  $("#serial-hex-preview").textContent = analysis.hex_preview || "No received bytes.";
+
+  const status = $("#serial-analysis-status");
+  if (analysis.status === "no_activity") {
+    status.textContent = "No activity";
+    status.className = "status-label error";
+  } else {
+    status.textContent = "Analyzed";
+    status.className = "status-label live";
+  }
+  const details = [
+    `${formatMetric(analysis.duration_ms, 0)} ms receive window`,
+    analysis.framing?.source === "inferred" ? "Framing inferred" : "Framing configured by operator",
+    run.summary?.device,
+    ...(protocol.evidence || []),
+    ...(analysis.warnings || []),
+  ].filter(Boolean);
+  $("#serial-analysis-detail").textContent = details.join(" · ");
+}
+
 function showCanAnalysis(run) {
   const analysis = run?.summary?.can_analysis;
   const status = $("#can-analysis-status");
@@ -419,18 +467,28 @@ function renderRuns(runs) {
     when.textContent = formatTimestamp(run.captured_at);
     identity.append(label, when);
     const backend = document.createElement("span");
-    backend.className = run.backend === "simulator" ? "sim" : "hardware";
+    backend.className = (run.backend || "").includes("simulator") ? "sim" : "hardware";
     backend.textContent = (run.backend || "unknown").toUpperCase();
     const window = document.createElement("span");
-    window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} SAMPLES`;
+    window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${isSerialRun(run) ? "BYTES" : "SAMPLES"}`;
     const links = document.createElement("nav");
     links.setAttribute("aria-label", `Artifacts for ${run.label}`);
-    links.append(
-      artifactLink(run, "overview.png", "PNG"),
-      artifactLink(run, "capture.csv", "CSV"),
-      artifactLink(run, "summary.json", "JSON"),
-      artifactLink(run, "report.pdf", "PDF"),
-    );
+    if (isSerialRun(run)) {
+      links.append(
+        artifactLink(run, "capture.bin", "BIN"),
+        artifactLink(run, "chunks.jsonl", "TIMING"),
+        artifactLink(run, "transcript.txt", "TEXT"),
+        artifactLink(run, "summary.json", "JSON"),
+        artifactLink(run, "report.pdf", "PDF"),
+      );
+    } else {
+      links.append(
+        artifactLink(run, "overview.png", "PNG"),
+        artifactLink(run, "capture.csv", "CSV"),
+        artifactLink(run, "summary.json", "JSON"),
+        artifactLink(run, "report.pdf", "PDF"),
+      );
+    }
     card.append(identity, backend, window, links);
     return card;
   }));
@@ -467,10 +525,12 @@ async function refreshRuns() {
     renderRuns(runs);
     renderTimeline(runs);
     showLatestMetadata(runs[0]);
+    showSerial(runs.find(isSerialRun));
     showNetwork(runs.find(isNetworkRun));
     showScope(runs.find(isScopeRun));
   } catch (error) {
     setMessage("#scope-message", `Could not load evidence list: ${error.message}`, "error");
+    setMessage("#serial-message", `Could not load evidence list: ${error.message}`, "error");
     setMessage("#can-message", `Could not load evidence list: ${error.message}`, "error");
   }
 }
@@ -509,6 +569,36 @@ function bindScopeCaptureForm() {
   });
 }
 
+function bindSerialCaptureForm() {
+  $("#serial-capture-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("#serial-capture-button");
+    button.disabled = true;
+    setMessage("#serial-message", "RX window open. Listening without writing…");
+    try {
+      const run = await getJson("/api/serial/captures", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          label: $("#serial-label").value,
+          duration_s: Number($("#serial-duration").value),
+          mode: $("#serial-mode").value,
+          baud: Number($("#serial-baud").value),
+          data_bits: Number($("#serial-data-bits").value),
+          parity: $("#serial-parity").value,
+          stop_bits: Number($("#serial-stop-bits").value),
+        }),
+      });
+      setMessage("#serial-message", `${run.run_id} completed. Raw RX and timing evidence are retained.`, "success");
+      await refreshRuns();
+    } catch (error) {
+      setMessage("#serial-message", `Serial receive failed: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function bindCanCaptureForm() {
   $("#can-capture-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -540,6 +630,7 @@ function bindCanCaptureForm() {
 bindTabs();
 bindScopeControls();
 bindScopeCaptureForm();
+bindSerialCaptureForm();
 bindCanCaptureForm();
 $("#refresh").addEventListener("click", refreshRuns);
 loadScopeProfiles();

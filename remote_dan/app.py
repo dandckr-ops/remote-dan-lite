@@ -27,6 +27,15 @@ from remote_dan.capture import (
 )
 from remote_dan.database import EvidenceDatabase
 from remote_dan.hardware import probe_pico_hardware
+from remote_dan.serial_analysis import SerialFraming
+from remote_dan.serial_capture import (
+    SerialCaptureBackend,
+    SerialCaptureManager,
+    SerialCaptureRequest,
+    SerialSimulatorBackend,
+    TermiosSerialBackend,
+    probe_serial_hardware,
+)
 
 STATIC_DIR = Path(__file__).with_name("static")
 
@@ -60,6 +69,17 @@ class ScopeChannelPayload(BaseModel):
     ] = 20.0
     attenuation: Literal[1.0, 10.0, 20.0] = 1.0
     coupling: Literal["DC", "AC"] = "DC"
+
+
+class SerialCapturePayload(BaseModel):
+    label: str = Field(default="serial receive capture", min_length=1, max_length=80)
+    duration_s: Literal[1, 2, 5, 10, 30] = 5
+    mode: Literal["auto", "hardware", "simulator"] = "auto"
+    baud: Literal[300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] = 9600
+    data_bits: Literal[5, 6, 7, 8] = 8
+    parity: Literal["N", "E", "O"] = "N"
+    stop_bits: Literal[1, 2] = 1
+    session_id: int | None = Field(default=None, ge=1)
 
 
 CapturePayload.model_rebuild()
@@ -118,6 +138,8 @@ def create_app(
     db_path: Path | str | None = None,
     hardware_probe: Callable[[], dict[str, object]] = probe_pico_hardware,
     hardware_backend: CaptureBackend | None = None,
+    serial_probe: Callable[[], dict[str, object]] = probe_serial_hardware,
+    serial_backend: SerialCaptureBackend | None = None,
 ) -> FastAPI:
     capture_dir = Path(data_dir)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +152,11 @@ def create_app(
         backend=SimulatorBackend(),
         database=database,
     )
+    serial_simulator = SerialCaptureManager(
+        capture_dir,
+        backend=SerialSimulatorBackend(),
+        database=database,
+    )
 
     app = FastAPI(
         title="Remote Dan Lite",
@@ -139,7 +166,14 @@ def create_app(
     app.state.capture_dir = capture_dir
     app.state.database = database
     app.state.hardware_probe = hardware_probe
+    app.state.serial_probe = serial_probe
     app.state.simulator = simulator
+    app.state.serial_simulator = serial_simulator
+    app.state.serial_hardware_manager = (
+        SerialCaptureManager(capture_dir, backend=serial_backend, database=database)
+        if serial_backend is not None
+        else None
+    )
     app.state.hardware_manager = (
         CaptureManager(capture_dir, backend=hardware_backend, database=database)
         if hardware_backend is not None
@@ -156,6 +190,7 @@ def create_app(
     @app.get("/api/status")
     def status() -> dict[str, object]:
         hardware = hardware_probe()
+        serial_hardware = serial_probe()
         hardware_ready = bool(
             hardware.get("driver_available") and hardware.get("device_present")
         )
@@ -166,11 +201,55 @@ def create_app(
             "capture_ready": True,
             "default_backend": "hardware" if hardware_ready else "simulator",
             "hardware": hardware,
+            "serial_hardware": serial_hardware,
         }
 
     @app.get("/api/captures")
     def captures() -> list[dict[str, object]]:
         return _list_manifests(capture_dir)
+
+    @app.post("/api/serial/captures", status_code=201)
+    def create_serial_capture(payload: SerialCapturePayload) -> dict[str, object]:
+        framing = SerialFraming(
+            baud=payload.baud,
+            data_bits=payload.data_bits,
+            parity=payload.parity,
+            stop_bits=payload.stop_bits,
+        )
+        serial_hardware = serial_probe()
+        hardware_ready = bool(serial_hardware.get("device_present"))
+        requested_hardware = payload.mode == "hardware" or (
+            payload.mode == "auto" and hardware_ready
+        )
+        request = SerialCaptureRequest(
+            label=payload.label,
+            duration_s=float(payload.duration_s),
+            framing=framing,
+            mode="hardware" if requested_hardware else "simulator",
+            session_id=payload.session_id,
+        )
+        if not requested_hardware:
+            try:
+                return app.state.serial_simulator.run(request)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not hardware_ready:
+            raise HTTPException(status_code=503, detail=str(serial_hardware.get("reason")))
+        if app.state.serial_hardware_manager is None:
+            stable_path = serial_hardware.get("stable_path")
+            if not stable_path:
+                raise HTTPException(status_code=503, detail="SEL C662 stable device path is unavailable")
+            app.state.serial_hardware_manager = SerialCaptureManager(
+                capture_dir,
+                backend=TermiosSerialBackend(Path(str(stable_path))),
+                database=database,
+            )
+        try:
+            return app.state.serial_hardware_manager.run(request)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=f"Serial receive failed: {exc}") from exc
 
     @app.get("/api/scope/profiles")
     def scope_profiles() -> dict[str, object]:

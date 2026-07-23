@@ -125,3 +125,69 @@ def test_hardware_mode_uses_the_wired_pico_backend_when_ready(tmp_path: Path) ->
 
     assert response.status_code == 201
     assert response.json()["backend"] == "ps2000a"
+
+
+def test_serial_status_and_simulator_capture_are_independent_of_pico(tmp_path: Path) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+        hardware_probe=lambda: {
+            "driver_available": False,
+            "device_present": False,
+            "reason": "Pico unavailable",
+        },
+        serial_probe=lambda: {
+            "device_present": True,
+            "model": "SEL C662 Serial Cable",
+            "stable_path": "/dev/serial/by-id/sel-test",
+            "device_path": "/dev/ttyUSB0",
+            "reason": "SEL C662 ready for receive-only capture",
+        },
+    )
+    client = TestClient(app)
+
+    status = client.get("/api/status")
+    created = client.post("/api/serial/captures", json={
+        "label": "SEL receive proof",
+        "duration_s": 2,
+        "mode": "simulator",
+        "baud": 9600,
+        "data_bits": 8,
+        "parity": "N",
+        "stop_bits": 1,
+    })
+
+    assert status.status_code == 200
+    assert status.json()["serial_hardware"]["device_present"] is True
+    assert created.status_code == 201
+    manifest = created.json()
+    assert manifest["capture_type"] == "serial"
+    assert manifest["backend"] == "serial-simulator"
+    assert manifest["summary"]["serial_analysis"]["protocol"]["name"] == "SEL ASCII / terminal"
+    evidence = client.get(f"/api/evidence/captures/{manifest['capture_id']}")
+    assert evidence.status_code == 200
+    assert len(evidence.json()["artifacts"]) == 7
+
+
+def test_serial_hardware_capture_fails_closed_when_c662_is_absent(tmp_path: Path) -> None:
+    app = create_app(
+        data_dir=tmp_path,
+        serial_probe=lambda: {
+            "device_present": False,
+            "stable_path": None,
+            "reason": "SEL C662 serial cable not detected",
+        },
+    )
+
+    response = TestClient(app).post("/api/serial/captures", json={
+        "label": "real serial",
+        "duration_s": 1,
+        "mode": "hardware",
+        "baud": 9600,
+        "data_bits": 8,
+        "parity": "N",
+        "stop_bits": 1,
+    })
+
+    assert response.status_code == 503
+    assert "not detected" in response.json()["detail"]
