@@ -76,12 +76,18 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
         "capture-form",
         "vbat-value",
         "vbat-detail",
+        "scope-vbat-value",
+        "scope-vbat-detail",
         "overview",
         "can-overview",
         "timeline-list",
         "run-list",
     }
     assert required_ids <= parser.ids
+
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    assert index.count("data-vbat-value") == 2
+    assert index.count("data-vbat-detail") == 2
 
 
 def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() -> None:
@@ -97,4 +103,5 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert "history.replaceState" in script
     assert "function formatVoltage" in script
     assert ".toFixed(2)" in script
-    assert '$("#vbat-value")' in script
+    assert '$$("[data-vbat-value]")' in script
+    assert '$$("[data-vbat-detail]")' in script

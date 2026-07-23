@@ -137,6 +137,14 @@ input:focus, select:focus { border-color: var(--live); box-shadow: 0 0 0 2px rgb
 .channel-strip .muted b { color: var(--muted); }
 .channel-strip span { display: block; margin: 8px 0 3px; font-size: 12px; }
 .channel-strip small { color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.network-evidence-layout { display: grid; grid-template-columns: minmax(280px, .34fr) minmax(0, 1fr); }
+.scope-voltage-gauge { min-width: 0; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--rule); background: radial-gradient(circle at 50% 40%, rgba(255, 188, 66, .07), transparent 62%); }
+.scope-gauge-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid rgba(40, 65, 54, .6); text-transform: uppercase; }
+.scope-gauge-label span { color: var(--amber); font-size: 9px; letter-spacing: .1em; }
+.scope-gauge-label strong { color: var(--muted); font-family: var(--condensed); font-size: 17px; letter-spacing: .07em; }
+.scope-readout { padding: 42px 16px 20px; }
+.scope-readout strong { font-size: clamp(66px, 7vw, 104px); }
+.scope-voltage-gauge .readout-detail { margin-top: auto; border-top: 1px solid rgba(40, 65, 54, .6); }
 .scope-grid { min-height: 390px; position: relative; overflow: hidden; background-image: linear-gradient(rgba(40, 65, 54, .45) 1px, transparent 1px), linear-gradient(90deg, rgba(40, 65, 54, .45) 1px, transparent 1px); background-size: 48px 32px; }
 .empty-preview { position: absolute; inset: 0; display: grid; place-content: center; gap: 8px; text-align: center; color: var(--muted); }
 .empty-preview strong { color: var(--cream); text-transform: uppercase; letter-spacing: .14em; font-size: 12px; }
@@ -209,6 +217,9 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
 @media (max-width: 900px) {
   .overview-grid { grid-template-columns: 1fr; }
   .battery-card, .latest-card, .node-card, .workflow-card { min-height: auto; }
+  .network-evidence-layout { grid-template-columns: 1fr; }
+  .scope-voltage-gauge { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .scope-voltage-gauge .readout-detail { margin-top: 0; }
   .commissioned-body { grid-template-columns: 1fr; }
   .run-card { grid-template-columns: 1fr 1fr; }
   .run-card nav { justify-content: flex-start; }

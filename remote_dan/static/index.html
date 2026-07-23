@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=tabs-1">
+  <link rel="stylesheet" href="/static/app.css?v=scope-gauge-1">
 </head>
 <body>
   <div class="shell">
@@ -41,9 +41,9 @@
               <p>Latest capture mean</p>
             </div>
             <div class="digital-readout" aria-live="polite">
-              <strong id="vbat-value">--.--</strong><span>V</span>
+              <strong id="vbat-value" data-vbat-value>--.--</strong><span>V</span>
             </div>
-            <p class="readout-detail" id="vbat-detail">No capture loaded. Raw VBAT remains in every evidence package.</p>
+            <p class="readout-detail" id="vbat-detail" data-vbat-detail>No capture loaded. Raw VBAT remains in every evidence package.</p>
           </section>
 
           <section class="panel latest-card">
@@ -132,13 +132,22 @@
               <div><span class="section-number">02</span><h2>Latest network waveform</h2></div>
               <a id="latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a>
             </div>
-            <div class="scope-grid">
-              <div class="empty-preview" id="empty-preview">
-                <div class="reticle"></div>
-                <strong>No capture loaded</strong>
-                <span>Run a bounded window to populate the evidence plane.</span>
+            <div class="network-evidence-layout">
+              <aside class="scope-voltage-gauge" aria-label="Latest capture battery voltage">
+                <div class="scope-gauge-label"><span>Channel A</span><strong>Battery voltage</strong></div>
+                <div class="digital-readout scope-readout" aria-live="polite">
+                  <strong id="scope-vbat-value" data-vbat-value>--.--</strong><span>V</span>
+                </div>
+                <p class="readout-detail" id="scope-vbat-detail" data-vbat-detail>No capture loaded. Raw VBAT remains in every evidence package.</p>
+              </aside>
+              <div class="scope-grid">
+                <div class="empty-preview" id="empty-preview">
+                  <div class="reticle"></div>
+                  <strong>No capture loaded</strong>
+                  <span>Run a bounded window to populate the evidence plane.</span>
+                </div>
+                <img id="overview" class="overview hidden" alt="Latest CAN-H and CAN-L waveform overview">
               </div>
-              <img id="overview" class="overview hidden" alt="Latest CAN-H and CAN-L waveform overview">
             </div>
           </section>
         </div>
@@ -229,6 +238,6 @@
       <span>Capture / routing / recovery remain separate failure domains</span>
     </footer>
   </div>
-  <script src="/static/app.js?v=tabs-1" defer></script>
+  <script src="/static/app.js?v=scope-gauge-1" defer></script>
 </body>
 </html>

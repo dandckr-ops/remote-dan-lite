@@ -133,10 +133,12 @@ function showLatest(run) {
   const summary = run.summary || {};
   const stats = summary.channel_stats || {};
   const vbat = stats.VBAT || {};
-  $("#vbat-value").textContent = formatVoltage(vbat.mean);
-  $("#vbat-detail").textContent = Number.isFinite(Number(vbat.mean))
+  const vbatValue = formatVoltage(vbat.mean);
+  const vbatDetail = Number.isFinite(Number(vbat.mean))
     ? `Min ${formatVoltage(vbat.min)} V · max ${formatVoltage(vbat.max)} V · ripple ${formatVoltage(vbat.p2p)} V p-p · raw samples retained`
     : "VBAT statistics are unavailable for this capture; raw artifacts remain unchanged.";
+  $$("[data-vbat-value]").forEach((element) => { element.textContent = vbatValue; });
+  $$("[data-vbat-detail]").forEach((element) => { element.textContent = vbatDetail; });
 
   $("#can-h-mean").textContent = formatMetric(stats["CAN-H"]?.mean);
   $("#can-l-mean").textContent = formatMetric(stats["CAN-L"]?.mean);
