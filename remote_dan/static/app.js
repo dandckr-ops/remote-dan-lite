@@ -1332,6 +1332,9 @@ function clearObdReadings(reason = "Disconnected. Previous readings are no longe
   $("#obd-live-list").replaceChildren(liveEmpty);
   $("#obd-live-updated").textContent = "Last update: —";
   setMessage("#obd-live-message", reason);
+  $("#obd-confirmed-summary-count").textContent = "—";
+  $("#obd-confirmed-summary-label").textContent = "Not read";
+  $("#obd-fault-summary").classList.remove("alert", "clear", "error");
   renderDtcList("#obd-stored-list", "#obd-stored-count", "#obd-stored-status", [], "not_read", "No current stored DTC snapshot.");
   renderDtcList("#obd-pending-list", "#obd-pending-count", "#obd-pending-status", [], "not_read", "No current pending DTC snapshot.");
   renderDtcList("#obd-permanent-list", "#obd-permanent-count", "#obd-permanent-status", [], "not_read", "No current permanent DTC snapshot.");
@@ -1499,6 +1502,27 @@ function renderDtcList(selector, countSelector, statusSelector, items, status, e
 
 function renderObdFaults(payload) {
   state.obd.faults = payload;
+  const summaryNode = $("#obd-fault-summary");
+  const summaryCount = $("#obd-confirmed-summary-count");
+  const summaryLabel = $("#obd-confirmed-summary-label");
+  const storedCount = payload.stored?.length || 0;
+  const hasStoredCount = payload.stored_status === "complete" || payload.stored_status === "partial";
+  summaryCount.textContent = hasStoredCount ? String(storedCount) : "—";
+  summaryNode.classList.remove("alert", "clear", "error");
+  if (payload.stored_status === "complete") {
+    summaryLabel.textContent = `${storedCount} CONFIRMED/STORED EMISSIONS DTC${storedCount === 1 ? "" : "s"}`;
+    summaryNode.classList.add(storedCount ? "alert" : "clear");
+  } else if (payload.stored_status === "partial") {
+    summaryLabel.textContent = `${storedCount} CONFIRMED/STORED EMISSIONS DTC${storedCount === 1 ? "" : "s"} · PARTIAL READ`;
+    summaryNode.classList.add("error");
+  } else {
+    summaryLabel.textContent = payload.stored_status === "no_data" ? "CONFIRMED/STORED DTC COUNT UNAVAILABLE" : "CONFIRMED/STORED DTC READ FAILED";
+    summaryNode.classList.add("error");
+  }
+  window.requestAnimationFrame(() => {
+    summaryCount.focus({preventScroll: true});
+    summaryNode.scrollIntoView({behavior: "smooth", block: "nearest"});
+  });
   renderDtcList("#obd-stored-list", "#obd-stored-count", "#obd-stored-status", payload.stored || [], payload.stored_status, payload.stored_status === "error" ? "Mode $03 read failed." : payload.stored_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $03." : "ECM returned zero confirmed/stored DTCs.");
   renderDtcList("#obd-pending-list", "#obd-pending-count", "#obd-pending-status", payload.pending || [], payload.pending_status, payload.pending_status === "error" ? "Mode $07 read failed." : payload.pending_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $07." : "ECM returned zero pending DTCs.");
   renderDtcList("#obd-permanent-list", "#obd-permanent-count", "#obd-permanent-status", payload.permanent || [], payload.permanent_status, payload.permanent_status === "error" ? "Mode $0A read failed." : payload.permanent_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $0A." : "ECM returned zero permanent DTCs.");

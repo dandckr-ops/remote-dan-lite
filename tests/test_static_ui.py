@@ -464,8 +464,8 @@ def test_obd_browser_code_fences_reads_recovers_polling_and_has_uuid_fallback() 
 def test_changed_static_assets_use_combined_release_cache_key() -> None:
     markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert "/static/app.css?v=obd-vin-v4" in markup
-    assert "/static/app.js?v=obd-vin-v4" in markup
+    assert "/static/app.css?v=obd-fault-summary-v5" in markup
+    assert "/static/app.js?v=obd-fault-summary-v5" in markup
     assert "/static/can_request_gate.js?v=can-decode-v1-remediation2" in markup
     assert "bus-discovery-1" not in markup
 
@@ -481,6 +481,9 @@ def test_obd_fault_and_vehicle_views_state_exact_scope_and_availability() -> Non
     assert "Mode $07 · Pending" in fault_panel
     assert "Mode $0A · Permanent" in fault_panel
     assert all(f'id="obd-{state}-status"' in fault_panel for state in ("stored", "pending", "permanent"))
+    assert 'class="obd-fault-summary"' in fault_panel
+    assert 'id="obd-confirmed-summary-count"' in fault_panel
+    assert 'id="obd-confirmed-summary-label"' in fault_panel
     assert "Vehicle ID" in vehicle_panel
     assert "Mode $09 PID $02 VIN only" in vehicle_panel
     assert "VIN validation" in vehicle_panel
@@ -495,7 +498,9 @@ def test_obd_fault_and_vehicle_views_state_exact_scope_and_availability() -> Non
     assert 'payload.vin_status === "no_data"' in script
     assert "VIN READ SUCCESSFULLY" in script
     assert 'status === "no_data" ? "Unavailable"' in script
+    assert "CONFIRMED/STORED EMISSIONS DTC" in script
     assert ".obd-vin-result" in (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+    assert ".obd-fault-summary" in (STATIC_DIR / "app.css").read_text(encoding="utf-8")
 
 
 def test_operator_source_selectors_do_not_offer_simulator_or_auto_fallback() -> None:

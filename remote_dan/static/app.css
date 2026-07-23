@@ -323,6 +323,15 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .obd-vin-result.success { border-color: rgba(92, 255, 154, .65); background: rgba(92, 255, 154, .10); box-shadow: inset 4px 0 0 var(--live); }
 .obd-vin-result.success strong, .obd-vin-result.success b { color: var(--live); }
 .obd-vin-result.error { border-color: rgba(255, 91, 76, .65); box-shadow: inset 4px 0 0 var(--danger); }
+.obd-fault-summary { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; align-items: center; padding: 20px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: rgba(255, 184, 77, .035); }
+.obd-fault-summary span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; }
+.obd-fault-summary strong { grid-row: 1 / span 2; color: var(--cream); font-family: var(--mono); font-size: clamp(52px, 18vw, 86px); line-height: .9; outline: none; }
+.obd-fault-summary small { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.obd-fault-summary.alert { border-color: rgba(255, 184, 77, .7); background: rgba(255, 184, 77, .11); box-shadow: inset 5px 0 0 var(--amber); }
+.obd-fault-summary.alert strong, .obd-fault-summary.alert small { color: var(--amber); }
+.obd-fault-summary.clear { border-color: rgba(92, 255, 154, .6); background: rgba(92, 255, 154, .08); box-shadow: inset 5px 0 0 var(--live); }
+.obd-fault-summary.clear strong, .obd-fault-summary.clear small { color: var(--live); }
+.obd-fault-summary.error { border-color: rgba(255, 91, 76, .65); box-shadow: inset 5px 0 0 var(--danger); }
 .obd-subnav { margin-top: 14px; border: 1px solid var(--rule); background: var(--panel-deep); overflow-x: auto; }
 .obd-tab-bar { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); min-width: 560px; }
 .obd-tab-bar button { min-height: 48px; border: 0; border-right: 1px solid var(--rule); background: transparent; color: var(--muted); font-family: var(--condensed); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }

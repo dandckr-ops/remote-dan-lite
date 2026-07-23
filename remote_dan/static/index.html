@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=obd-vin-v4">
+  <link rel="stylesheet" href="/static/app.css?v=obd-fault-summary-v5">
 </head>
 <body>
   <div class="shell">
@@ -423,6 +423,11 @@
           </div>
           <p class="obd-boundary">Generic emissions DTCs only from SAE J1979 services on responding powertrain ECUs. This is not a full Subaru module fault scan.</p>
           <div class="message" id="obd-fault-message" aria-live="polite">No fault snapshot loaded.</div>
+          <div class="obd-fault-summary" id="obd-fault-summary">
+            <span>Confirmed/stored emissions DTCs</span>
+            <strong id="obd-confirmed-summary-count" aria-live="polite" tabindex="-1">—</strong>
+            <small id="obd-confirmed-summary-label">Not read</small>
+          </div>
           <section class="obd-readiness" aria-labelledby="obd-readiness-heading">
             <h3 id="obd-readiness-heading">MIL and readiness monitors</h3>
             <div id="obd-readiness-list"><p class="empty-list">No readiness response loaded.</p></div>
@@ -545,6 +550,6 @@
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
   <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=obd-vin-v4" defer></script>
+  <script src="/static/app.js?v=obd-fault-summary-v5" defer></script>
 </body>
 </html>
