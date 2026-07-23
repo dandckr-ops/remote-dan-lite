@@ -71,6 +71,45 @@ def test_console_declares_nine_accessible_primary_tabs() -> None:
         assert ("hidden" in panel) is (index != 0)
 
 
+def test_console_tour_is_an_accessible_offline_preview_without_live_actions() -> None:
+    tour = ROOT / "docs" / "console-tour.html"
+    markup = tour.read_text(encoding="utf-8")
+
+    assert "Offline interactive documentation preview" in markup
+    assert "representative data" in markup
+    assert "No appliance APIs or live hardware actions" in markup
+    assert "fetch(" not in markup
+    assert "/api/" not in markup
+    assert "<link " not in markup
+    assert "<script src=" not in markup
+
+    parser = ConsoleParser()
+    parser.feed(markup)
+    parser.close()
+    assert [tab["data-tab"] for tab in parser.tabs] == EXPECTED_TABS
+    assert [panel["data-panel"] for panel in parser.panels] == EXPECTED_TABS
+
+    for index, name in enumerate(EXPECTED_TABS):
+        tab = parser.tabs[index]
+        panel = parser.panels[index]
+        assert tab["id"] == f"tour-tab-{name}"
+        assert tab["aria-controls"] == f"tour-panel-{name}"
+        assert tab["aria-selected"] == ("true" if index == 0 else "false")
+        assert panel["id"] == f"tour-panel-{name}"
+        assert panel["aria-labelledby"] == f"tour-tab-{name}"
+        assert ("hidden" in panel) is (index != 0)
+
+        panel_markup = markup.split(f'id="tour-panel-{name}"', 1)[1].split("</section>", 1)[0]
+        assert "Capability" in panel_markup
+        assert "Boundary / safety" in panel_markup
+
+    assert 'addEventListener("keydown"' in markup
+    assert '"ArrowRight"' in markup
+    assert '"ArrowLeft"' in markup
+    assert "window.location.hash" in markup
+    assert "hashchange" in markup
+
+
 def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> None:
     parser = parse_console()
 

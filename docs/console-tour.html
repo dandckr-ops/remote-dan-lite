@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Remote Dan Lite console tour</title>
+  <style>
+    :root { color-scheme: dark; --ink:#d9eee5; --muted:#96b7aa; --bg:#07100d; --panel:#102018; --panel-hi:#152a20; --line:#28513d; --green:#64f3a2; --amber:#f4c861; --red:#ff8a85; --mono:ui-monospace,SFMono-Regular,Consolas,monospace; --sans:Inter,system-ui,sans-serif; }
+    * { box-sizing:border-box; } body { margin:0; min-height:100vh; color:var(--ink); font:16px/1.5 var(--sans); background:radial-gradient(circle at 20% 0, #143c2a 0, transparent 32rem),var(--bg); }
+    .shell { max-width:1200px; margin:auto; padding:2rem clamp(1rem,4vw,3rem) 4rem; } .eyebrow { margin:0; color:var(--green); font:700 .75rem/1.4 var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:.3rem 0; font-size:clamp(2rem,5vw,4rem); line-height:1; } h2 { margin:0; font-size:1.35rem; } h3 { margin:0 0 .4rem; font-size:.88rem; font-family:var(--mono); letter-spacing:.07em; text-transform:uppercase; color:var(--muted); }
+    .intro { max-width:78ch; color:var(--muted); } .notice { margin:1.5rem 0; padding:.85rem 1rem; border:1px solid #496b58; border-radius:.6rem; background:#0d2519; } .notice strong { color:var(--green); }
+    [role="tablist"] { display:flex; gap:.45rem; overflow-x:auto; padding:.25rem 0 1rem; border-bottom:1px solid var(--line); } [role="tab"] { flex:0 0 auto; border:1px solid transparent; border-radius:.45rem; padding:.6rem .75rem; color:var(--muted); background:transparent; font:700 .78rem var(--mono); cursor:pointer; } [role="tab"]:hover,[role="tab"]:focus-visible { outline:none; border-color:var(--green); color:var(--ink); } [role="tab"][aria-selected="true"] { color:#052012; background:var(--green); }
+    [role="tabpanel"] { margin-top:1.25rem; } .console { overflow:hidden; border:1px solid var(--line); border-radius:1rem; background:linear-gradient(145deg,var(--panel-hi),var(--panel)); box-shadow:0 1.2rem 3rem #0006; } .console-head { display:flex; justify-content:space-between; gap:1rem; align-items:center; padding:1rem 1.25rem; border-bottom:1px solid var(--line); background:#0b1711; } .chip { border:1px solid #4d765c; border-radius:999px; padding:.22rem .55rem; color:var(--green); font:.72rem var(--mono); white-space:nowrap; }
+    .content { display:grid; gap:1rem; grid-template-columns:1.2fr .8fr; padding:1.25rem; } .card { min-width:0; padding:1rem; border:1px solid var(--line); border-radius:.65rem; background:#0b1912; } .metric { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; } .metric div { padding:.7rem; border-radius:.45rem; background:#10271b; } .metric span { display:block; color:var(--muted); font-size:.75rem; } .metric strong { font-family:var(--mono); font-size:1rem; }
+    .wave { position:relative; height:126px; overflow:hidden; border-radius:.45rem; background:repeating-linear-gradient(0deg,transparent 0 25px,#2a4c3b 26px 27px),repeating-linear-gradient(90deg,transparent 0 39px,#2a4c3b 40px 41px),#07120d; } .wave svg { width:100%; height:100%; } .list { display:grid; gap:.45rem; padding:0; margin:0; list-style:none; } .list li { padding:.48rem .6rem; border-left:3px solid var(--green); background:#102319; } .muted { color:var(--muted); } .status-ok { color:var(--green); } .status-warn { color:var(--amber); } .status-stop { color:var(--red); } .boundary { border-left:3px solid var(--amber); } .mono { font-family:var(--mono); } button.demo { margin-top:.75rem; padding:.55rem .7rem; border:1px solid #527762; border-radius:.4rem; background:#183823; color:var(--ink); font:700 .75rem var(--mono); } button.demo:disabled { opacity:.7; cursor:not-allowed; }
+    .footer { margin-top:1.5rem; color:var(--muted); font-size:.88rem; } @media (max-width:720px) { .content { grid-template-columns:1fr; } .metric { grid-template-columns:1fr; } .console-head { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <p class="eyebrow">Remote Dan Lite / documentation</p>
+    <h1>Console tour</h1>
+    <p class="intro">Offline interactive documentation preview of the current Remote Dan Lite console, using representative data to show the workspace without connecting to an appliance.</p>
+    <p class="notice"><strong>Preview boundary:</strong> No appliance APIs or live hardware actions are available here. Buttons only change this page; values, captures, and evidence are illustrative.</p>
+
+    <nav aria-label="Console tour workspaces">
+      <div role="tablist" aria-label="Remote Dan Lite workspaces">
+        <button type="button" role="tab" id="tour-tab-overview" data-tab="overview" aria-controls="tour-panel-overview" aria-selected="true" tabindex="0">01 Overview</button>
+        <button type="button" role="tab" id="tour-tab-bus-sniffer" data-tab="bus-sniffer" aria-controls="tour-panel-bus-sniffer" aria-selected="false" tabindex="-1">02 Bus Sniffer</button>
+        <button type="button" role="tab" id="tour-tab-scope" data-tab="scope" aria-controls="tour-panel-scope" aria-selected="false" tabindex="-1">03 Scope</button>
+        <button type="button" role="tab" id="tour-tab-serial" data-tab="serial" aria-controls="tour-panel-serial" aria-selected="false" tabindex="-1">04 Serial</button>
+        <button type="button" role="tab" id="tour-tab-can" data-tab="can" aria-controls="tour-panel-can" aria-selected="false" tabindex="-1">05 CAN</button>
+        <button type="button" role="tab" id="tour-tab-modbus" data-tab="modbus" aria-controls="tour-panel-modbus" aria-selected="false" tabindex="-1">06 Modbus</button>
+        <button type="button" role="tab" id="tour-tab-tests" data-tab="tests" aria-controls="tour-panel-tests" aria-selected="false" tabindex="-1">07 Tests</button>
+        <button type="button" role="tab" id="tour-tab-timeline" data-tab="timeline" aria-controls="tour-panel-timeline" aria-selected="false" tabindex="-1">08 Timeline</button>
+        <button type="button" role="tab" id="tour-tab-evidence" data-tab="evidence" aria-controls="tour-panel-evidence" aria-selected="false" tabindex="-1">09 Evidence</button>
+      </div>
+    </nav>
+
+    <section class="console" id="tour-panel-overview" role="tabpanel" aria-labelledby="tour-tab-overview" data-panel="overview">
+      <header class="console-head"><div><p class="eyebrow">01 / session snapshot</p><h2>Overview</h2></div><span class="chip">REPRESENTATIVE SESSION</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Orients the technician to the latest capture, capture-plane readiness, and available acquisition lanes in one synchronized diagnostic session.</p><h3>Boundary / safety</h3><p class="boundary">Status here is illustrative. The preview cannot verify hardware, route USB, start a capture, or make a diagnostic conclusion.</p><div class="metric"><div><span>Latest capture</span><strong>CAN baseline</strong></div><div><span>Backend</span><strong>simulator</strong></div><div><span>Evidence ID</span><strong>CAP-024</strong></div></div></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li><span class="status-ok">●</span> Capture plane / representative ready state</li><li>Open Scope workspace</li><li>Open CAN network capture</li><li>USB routing / read-only until commissioned</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-bus-sniffer" role="tabpanel" aria-labelledby="tour-tab-bus-sniffer" data-panel="bus-sniffer" hidden>
+      <header class="console-head"><div><p class="eyebrow">02 / passive classification</p><h2>Bus Sniffer</h2></div><span class="chip">AWAITING SURVEY</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Combines bounded fast, context, and sparse windows to rank electrical topology and recommend a compatible existing workspace.</p><h3>Boundary / safety</h3><p class="boundary">Unverified connections remain blocked. Passive observation does not prove an application protocol, and software cannot make an unknown ground connection safe.</p><button class="demo" type="button" disabled>Identify bus — passive (preview only)</button></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Verified connection: <strong class="status-stop">Unknown / blocked</strong></li><li>Likely family: RS-485 candidate</li><li>Confidence: medium only after repeatable framing</li><li>Recommended lane: receive-only Serial</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-scope" role="tabpanel" aria-labelledby="tour-tab-scope" data-panel="scope" hidden>
+      <header class="console-head"><div><p class="eyebrow">03 / physical signals</p><h2>Scope</h2></div><span class="chip">PROFILE: GENERAL</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Configures four channels, coupling, input range, probe scaling, and a bounded capture window for physical-signal evidence.</p><h3>Boundary / safety</h3><p class="boundary">Profiles are starting points, not conclusions. Secondary ignition requires a capacitive pickup; never connect a scope lead directly to secondary ignition.</p><div class="wave" aria-label="Representative scope waveform"><svg viewBox="0 0 700 126" preserveAspectRatio="none" aria-hidden="true"><path d="M0 76 L50 74 65 30 75 95 90 76 135 75 150 48 165 102 180 76 250 75 265 25 280 104 295 76 700 75" fill="none" stroke="#64f3a2" stroke-width="3"/></svg></div></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Window: 200 ms / 500 kS/s</li><li>Channel A: crank sensor / ±20 V</li><li>Channel B: sync / AC coupled</li><li>Auto-scale suggestions apply only to the next capture</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-serial" role="tabpanel" aria-labelledby="tour-tab-serial" data-panel="serial" hidden>
+      <header class="console-head"><div><p class="eyebrow">04 / passive receive lane</p><h2>Serial</h2></div><span class="chip">RX ONLY</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Preserves raw receive bytes, timing chunks, transcript, configured framing, and conservative protocol fingerprints for a selected serial identity.</p><h3>Boundary / safety</h3><p class="boundary">The application opens receive-only, but electrical passivity still requires TXD, DTR, RTS, and other outputs to be physically disconnected and insulated.</p><pre class="mono">01 03 00 6B 00 03 74 17
+candidate: Modbus RTU</pre></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Device: stable C662 identity</li><li>Framing: 9600 / 8N1 configured</li><li>Valid frames: 2</li><li>Confidence: candidate, not identity proof</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-can" role="tabpanel" aria-labelledby="tour-tab-can" data-panel="can" hidden>
+      <header class="console-head"><div><p class="eyebrow">05 / commissioned network harness</p><h2>CAN</h2></div><span class="chip">PASSIVE ANALYSIS</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Reviews fixed VBAT, CAN-H, and CAN-L capture evidence for bus load, bitrate, frame form, identifiers, physical-layer measurements, and CRC-gated fingerprints.</p><h3>Boundary / safety</h3><p class="boundary">Bitrate or voltage shape alone never proves a protocol. This preview cannot attach to a vehicle or transmit, acknowledge, terminate, bias, or alter a network.</p><div class="wave" aria-label="Representative CAN differential waveform"><svg viewBox="0 0 700 126" preserveAspectRatio="none" aria-hidden="true"><path d="M0 84 L60 84 70 35 92 35 102 84 145 84 155 35 175 35 185 84 255 84 265 35 285 35 295 84 700 84" fill="none" stroke="#61dff0" stroke-width="3"/></svg></div></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Battery voltage: 12.46 V</li><li>Nominal rate: 500 kbit/s</li><li>Bus load: 18.4%</li><li>Fingerprint: J1939 candidate / CRC-gated</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-modbus" role="tabpanel" aria-labelledby="tour-tab-modbus" data-panel="modbus" hidden>
+      <header class="console-head"><div><p class="eyebrow">06 / network identity discovery</p><h2>Modbus</h2></div><span class="chip">READ-ONLY DESIGN</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Shows bounded, manually initiated interface-selected HICP plus Modbus 43/14 identity discovery and preserves transaction outcomes.</p><h3>Boundary / safety</h3><p class="boundary">There are no register reads, retries, or writes in this workflow. Representative device rows are not network observations.</p><button class="demo" type="button" disabled>Start discovery (preview only)</button></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Interface: 192.168.10.0/24</li><li>Confirmed identities: 2</li><li>Anybus gateway: observed</li><li>Writes performed: <strong class="status-ok">0</strong></li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-tests" role="tabpanel" aria-labelledby="tour-tab-tests" data-panel="tests" hidden>
+      <header class="console-head"><div><p class="eyebrow">07 / guided workflows</p><h2>Tests</h2></div><span class="chip">EVIDENCE-FIRST</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Packages repeatable guided workflows such as relative compression and cylinder contribution around the shared capture engines and their raw evidence.</p><h3>Boundary / safety</h3><p class="boundary">A test result preserves calculations, confidence, and technician interpretation; it does not automatically claim a fault cause or operate the vehicle.</p><div class="metric"><div><span>Selected test</span><strong>Relative compression</strong></div><div><span>Evidence</span><strong>CAP-024</strong></div><div><span>Interpretation</span><strong>pending</strong></div></div></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Guided setup prompts</li><li>Capture reuse rather than a separate engine</li><li>Calculation visibility</li><li>Operator finding remains explicit</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-timeline" role="tabpanel" aria-labelledby="tour-tab-timeline" data-panel="timeline" hidden>
+      <header class="console-head"><div><p class="eyebrow">08 / timing context</p><h2>Timeline</h2></div><span class="chip">SESSION ORDER</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Places captures, guided tests, notes, and event markers in durable session order so a reviewer can reconstruct timing context.</p><h3>Boundary / safety</h3><p class="boundary">Preview timestamps are representative. Timeline order improves traceability but cannot substitute for synchronized source timing or a technician's observation.</p><ol class="list"><li><span class="mono">09:41:02</span> Session opened</li><li><span class="mono">09:43:18</span> CAN baseline captured</li><li><span class="mono">09:46:09</span> Operator note added</li></ol></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Session: CASE-017</li><li>Markers: 3</li><li>Captures: 2</li><li>All dates shown are example data</li></ul></aside></div>
+    </section>
+
+    <section class="console" id="tour-panel-evidence" role="tabpanel" aria-labelledby="tour-tab-evidence" data-panel="evidence" hidden>
+      <header class="console-head"><div><p class="eyebrow">09 / durable review package</p><h2>Evidence</h2></div><span class="chip">CHECKSUM LINEAGE</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Indexes artifacts through asset, case, session, capture, and artifact lineage while keeping raw files ordinary downloadable evidence objects.</p><h3>Boundary / safety</h3><p class="boundary">The listed manifest and hashes are illustrative. This page cannot generate, download, verify, or alter actual appliance evidence.</p><ul class="list"><li><span class="mono">capture.csv</span> / raw waveform</li><li><span class="mono">summary.json</span> / measurements and provenance</li><li><span class="mono">manifest.json</span> / SHA-256 inventory</li></ul></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Capture: CAP-024</li><li>Artifacts: 5</li><li>Integrity: representative manifest</li><li>Review state: ready for technician export</li></ul></aside></div>
+    </section>
+
+    <p class="footer">Use the tab buttons, Left/Right Arrow keys, Home/End, or a hash deep link such as <a href="#can">#can</a>. This documentation preview is deliberately separate from the live appliance console.</p>
+  </main>
+  <script>
+    (() => {
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+      const tabByName = new Map(tabs.map((tab) => [tab.dataset.tab, tab]));
+      function activateTab(name, focus = false) {
+        const selected = tabByName.get(name) || tabs[0];
+        tabs.forEach((tab) => { const active = tab === selected; tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1; });
+        panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== selected.dataset.tab; });
+        if (focus) selected.focus();
+        if (window.location.hash !== `#${selected.dataset.tab}`) history.replaceState(null, '', `#${selected.dataset.tab}`);
+      }
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+        tab.addEventListener("keydown", (event) => {
+          const keys = { "ArrowRight": 1, "ArrowLeft": -1, Home: -index, End: tabs.length - index - 1 };
+          if (!(event.key in keys)) return;
+          event.preventDefault();
+          activateTab(tabs[(index + keys[event.key] + tabs.length) % tabs.length].dataset.tab, true);
+        });
+      });
+      window.addEventListener('hashchange', () => activateTab(window.location.hash.slice(1)));
+      activateTab(window.location.hash.slice(1));
+    })();
+  </script>
+</body>
+</html>

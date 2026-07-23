@@ -74,6 +74,10 @@ The default product split is intentional:
 
 See [`docs/architecture.md`](docs/architecture.md) for the full status vocabulary, tab map, evidence model, and Modbus boundary.
 
+## Console tour
+
+[Open the interactive console tour](docs/console-tour.html) for a GitHub-friendly, self-contained documentation preview of all nine primary workspaces. It uses representative data and supports tab buttons, keyboard navigation, and hash deep links, but it is **not** the live appliance: it makes no appliance API calls and cannot access hardware, start captures, scan networks, or change routing.
+
 ## Operator surface
 
 The implemented primary navigation is:
