@@ -61,6 +61,31 @@ def test_crc_valid_can_routes_to_can_workspace_and_commissioned_harness() -> Non
     assert "CRC-valid" in " ".join(result["evidence"])
 
 
+def test_reversed_can_pair_is_decoded_and_reported_as_reversed_polarity() -> None:
+    data = SimulatorBackend(seed=2406).capture(CaptureRequest(
+        label="reversed CAN survey",
+        preset="can-analysis",
+        mode="simulator",
+        capture_type="bus_survey",
+        profile="network",
+    ))
+    channels = dict(data.channels)
+    channels["CAN-H"], channels["CAN-L"] = (
+        data.channels["CAN-L"],
+        data.channels["CAN-H"],
+    )
+
+    result = analyze_bus_survey([
+        _segment(data.time_us, channels),
+    ], harness="can-network")
+
+    assert result["family"] == "CAN-family"
+    assert result["candidate_bitrate_bps"] == 500_000
+    assert result["workspace"] == "can"
+    assert result["features"]["can_polarity"] == "reversed"
+    assert any("reversed" in warning.lower() for warning in result["warnings"])
+
+
 def test_differential_uart_shape_routes_to_serial_with_isolated_rs485_receiver() -> None:
     time_us, logic = _uart_logic(b"\x01\x03\x00\x00\x00\x02\xC4\x0B" * 4)
     positive = 2.5 + np.where(logic > 0.5, 1.5, -1.5)

@@ -391,13 +391,30 @@ def analyze_bus_survey(
                     f"unsafe common mode in {len(unsafe_common_windows)} window(s)"
                 ],
             )
+        can_polarity = "expected"
         try:
             can = analyze_can_waveform(segment.time_us, positive, negative)
         except ValueError:
             can = {"status": "insufficient_timing_evidence"}
+        if int(can.get("crc_valid_header_count", 0)) == 0:
+            try:
+                reversed_can = analyze_can_waveform(
+                    segment.time_us, negative, positive
+                )
+            except ValueError:
+                reversed_can = {"status": "insufficient_timing_evidence"}
+            if int(reversed_can.get("crc_valid_header_count", 0)) > 0:
+                can = reversed_can
+                can_polarity = "reversed"
         if can.get("status") == "analyzed" and int(can.get("crc_valid_header_count", 0)) > 0:
             rate = int(can["nominal_bitrate_bps"])
             features["can_analysis"] = can
+            features["can_polarity"] = can_polarity
+            can_warnings = list(can.get("warnings", []))
+            if can_polarity == "reversed":
+                can_warnings.append(
+                    "CAN polarity is reversed relative to the recorded CAN-H/CAN-L labels; verify or swap the B/C probe leads."
+                )
             return _base_result(
                 status="classified",
                 topology="Differential pair",
@@ -415,7 +432,7 @@ def analyze_bus_survey(
                     f"{rate} bit/s nominal timing",
                     f"pair correlation {correlation:.3f}",
                 ],
-                warnings=list(can.get("warnings", [])),
+                warnings=can_warnings,
             )
         def differential_signal(item: SurveySegment):
             positive_name = "CAN-H" if "CAN-H" in item.channels else "B"
