@@ -24,6 +24,7 @@ This repository deliberately separates proven behavior from source-complete and 
 |---|---|---|
 | Pi 5 + PicoScope 2406B network capture | **Proven** | Hardware acquisition has produced bounded VBAT/CAN captures and downloadable evidence packages. |
 | Passive CAN signal intelligence | **Hardware-path proven** | The 2406B sustained a 250,000-sample, three-channel analysis capture at a negotiated 0.104 µs interval with no overflow. Load, bitrate, frame format, identifier width, and CRC-gated protocol fingerprints are persisted with explicit confidence. |
+| CAN Decode v1 | **Private field-fixture proven; in governed source** | Existing CAN and eligible Bus Sniffer waveforms produce immutable child evidence with complete CRC/structure-validated Classical CAN frames, reversed-polarity handling, identifier cadence/change summaries, source hashes, and SQLite parent lineage. It remains generic and makes no DBC or OEM signal claims. |
 | Configurable Scope workspace | **Hardware-preflight proven** | The real 2406B accepted profile-driven A–D enable state, AC/DC coupling, ±20 mV through ±20 V input ranges, 1:1/10:1/20:1 scaling, and a 10-second 250,000-sample capture. Secondary ignition requires a capacitive pickup and never a direct secondary connection. |
 | Artifact generation | **Proven** | Each run produces CSV, JSON, PNG, PDF, and a checksum manifest. |
 | SQLite evidence index | **Proven live** | The appliance preserves capture/artifact lineage locally while waveform and report files remain ordinary filesystem artifacts. |
@@ -48,6 +49,8 @@ Simulator data is always labeled `simulator`. Hardware mode fails closed when th
 A Serial run produces `capture.bin`, timestamped `chunks.jsonl`, `transcript.txt`, `summary.json`, `overview.png`, `report.pdf`, and `manifest.json`. `capture.bin` preserves the original PARMRK stream; decoded bytes and error markers remain distinguishable in the timing sidecar.
 
 A Bus Sniffer run produces fast/context/sparse waveform CSVs, segment and acquisition provenance, classifier evidence, PNG/PDF review artifacts, and a checksum manifest. Hardware mode requires recorded low-voltage, common-reference, probe-rating, and passive-only attestations. Simulator graphics are visibly marked **SIMULATED EVIDENCE**.
+
+A CAN Decode run derives `frames.jsonl`, `identifiers.csv`, `summary.json`, and `manifest.json` from an existing eligible waveform without reacquisition. It records the source run/capture identity, exact source artifact SHA-256, selected polarity, nominal bitrate, complete-frame and rejected-candidate counts, decoder settings, limitations, and `writes_performed: 0`. Source evidence is never rewritten.
 
 A Modbus discovery run produces `devices.csv`, `transactions.jsonl`, `scan.json`, PNG/PDF review artifacts, and a checksum manifest. Discovery is constrained to one selected connected RFC1918/link-local interface, at most 254 hosts, four workers by default, one HICP broadcast, and one Modbus 43/14 request per remaining candidate. There are no retries, register reads, or register writes.
 
@@ -88,7 +91,7 @@ Connections and System remain secondary setup surfaces. Tabs configure or inspec
 
 **Scope** is the configurable physical-signal workspace. It provides General, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary starting profiles; 40 ms through 10 s windows; four channel enable/label controls; AC/DC coupling; model-proven input ranges; probe scaling; and bounded next-capture auto-range suggestions.
 
-**CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. Its analysis window samples the passive pair at approximately 10 MS/s and reports observed occupancy, nominal bitrate, CAN versus CAN FD header evidence, BRS data rate when resolvable, identifier width, frame activity, physical-layer measurements, and confidence-ranked protocol fingerprints. J1939, NMEA 2000, OBD-II/ISO-TP, and CANopen names require CRC-valid Classical CAN frames plus their identifier/PGN patterns; bitrate or voltage shape alone is never treated as proof. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
+**CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. Its analysis window samples the passive pair at approximately 10 MS/s and reports observed occupancy, nominal bitrate, CAN versus CAN FD header evidence, BRS data rate when resolvable, identifier width, frame activity, physical-layer measurements, and confidence-ranked protocol fingerprints. CAN Decode v1 can also derive complete Classical CAN frame rows and deterministic identifier cadence/change summaries from an existing CAN capture or eligible differential Bus Sniffer run without reacquiring the bus. J1939, NMEA 2000, OBD-II/ISO-TP, and CANopen names require CRC-valid Classical CAN frames plus their identifier/PGN patterns; bitrate or voltage shape alone is never treated as proof. The decode view makes no DBC or OEM signal claim. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
 
 **Bus Sniffer** is a passive electrical-classification gate, not an active discovery tool. It reconciles bounded fast, context, and sparse windows; requires repeatable framing before medium-confidence UART-family claims; fails closed on silence, clipping, periodic-clock lookalikes, and contradictory evidence; and only opens an existing workspace when its physical input lane is actually compatible. RS-485/422, RS-232, TTL, and 12 V single-wire candidates remain blocked until an appropriate receive-only interface is commissioned.
 
@@ -116,6 +119,8 @@ The durable lineage is:
 ```text
 asset → diagnostic case → session → capture → artifact
 ```
+
+Derived CAN evidence additionally records `source_run_id` / `parent_run_id`, the authoritative parent capture ID resolved from SQLite, the exact source filename and SHA-256, and the inherited diagnostic session. The original capture, manifest, database row, and artifact records remain unchanged.
 
 SQLite stores metadata and relationships. Large evidence bytes remain ordinary files and are referenced by database ID, relative path, media type, byte size, and SHA-256 checksum.
 

@@ -221,6 +221,12 @@ def test_bus_survey_eligibility_includes_differential_ambiguity_but_not_uart() -
         "family": "Differential digital or bus candidate — unresolved",
         "workspace": "scope",
     })
+    assert eligible_bus_survey_classification({
+        "status": "ambiguous",
+        "electrical_topology": "Differential pair",
+        "family": "Differential digital or bus candidate — unresolved",
+        "workspace": "scope",
+    })
     assert not eligible_bus_survey_classification({
         "status": "classified",
         "topology": "Differential pair",

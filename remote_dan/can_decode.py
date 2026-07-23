@@ -74,9 +74,10 @@ def eligible_bus_survey_classification(classification: object) -> bool:
         or classification.get("workspace") == "can"
     ):
         return True
+    topology = classification.get("electrical_topology", classification.get("topology"))
     return (
         classification.get("status") == "ambiguous"
-        and classification.get("topology") == "Differential pair"
+        and topology == "Differential pair"
     )
 
 

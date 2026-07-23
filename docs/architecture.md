@@ -16,6 +16,7 @@ At the current repository baseline:
 
 - Pi 5 + PicoScope 2406B network capture is **proven**.
 - Passive CAN analysis is **hardware-path proven** at a negotiated 0.104 µs sample interval over all three commissioned channels with no overflow.
+- CAN Decode v1 is **private field-fixture proven and in governed source**. It derives generic Classical CAN frame and identifier evidence from existing CAN or eligible Bus Sniffer waveforms without reacquisition or transmission; live deployment remains a separate acceptance gate.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
 - SQLite metadata and evidence lineage are **proven live**.
 - Seven core session-centered tabs are **proven live**. Bus Sniffer and Modbus expand the governed source to nine tabs and are **simulator-proven**; their first real protected-input/Pico and on-network discovery runs remain commissioning boundaries. The Serial receive lane is **in governed source and simulator-proven**; its first real C662 capture remains a commissioning boundary.
@@ -84,7 +85,7 @@ The implemented primary tabs are:
 2. **Bus Sniffer** — passive multi-window physical-layer classification and compatible-lane recommendation
 3. **Scope** — profile-driven physical-signal acquisition with four configurable channels
 4. **Serial** — raw serial configuration, capture, and decode evidence
-5. **CAN** — listen-only acquisition, battery gauge, CAN-H/CAN-L evidence, passive signal intelligence, and confidence-ranked protocol fingerprints
+5. **CAN** — listen-only acquisition, battery gauge, CAN-H/CAN-L evidence, passive signal intelligence, confidence-ranked protocol fingerprints, and generic decode of existing eligible captures
 6. **Modbus** — manually initiated, interface-scoped HICP and Modbus 43/14 identity discovery
 7. **Tests** — guided workflows that configure the shared acquisition engines
 8. **Timeline** — correlated scope, CAN, serial, test, and operator events
@@ -121,6 +122,16 @@ The persisted analysis separates measurement from inference:
 - Pico overflow, too few samples per bit, no activity, and ambiguous timing fail closed or lower confidence.
 
 The analysis is passive and listen-only. It does not transmit, acknowledge, replay, fuzz, or actively probe the bus. A short observation window describes only traffic seen during that window; absence of CAN FD or a protocol fingerprint does not prove the vehicle or network cannot use it elsewhere.
+
+### CAN Decode v1 boundary
+
+CAN Decode v1 is a derived-evidence workflow over an existing immutable waveform. It does not trigger Pico acquisition. The decoder tries the recorded CAN-H/CAN-L orientation first and retries with the logical pair reversed only when the expected orientation produces no complete valid frames. Raw channel labels and source bytes are retained unchanged; reversed polarity is persisted as an explicit warning.
+
+Published frame rows require complete Classical CAN structure: valid stuffing through the CRC sequence, CRC-15, recessive CRC delimiter, recessive ACK delimiter, seven recessive EOF bits, and complete source-sample bounds. The ACK slot itself may be dominant or recessive. CRC-only or truncated candidates remain rejected and never expose payload as trusted evidence. CAN FD candidates are counted as unsupported rather than decoded as Classical CAN.
+
+Each explicit decode action creates a child evidence run containing `frames.jsonl`, `identifiers.csv`, `summary.json`, and `manifest.json`. The child stores the source/parent run ID, authoritative SQLite parent capture ID, source filename and SHA-256, decoder settings, polarity, nominal bitrate, frame/identifier/rejected counts, inherited session, limitations, and `writes_performed: 0`. It never mutates the source manifest, waveform, SQLite capture row, or source artifact records.
+
+The current UI and API are intentionally generic. They show frame timestamps, standard/extended identifiers, RTR/DLC, payload bytes, cadence, payload transitions, and byte-change counts. They do not provide DBC decoding, OEM signal meaning, PID/VIN extraction, ISO-TP/UDS reassembly, CAN FD payload decoding, transmit, ACK generation, replay, stimulation, or queries.
 
 ### Passive Serial boundary
 
@@ -170,6 +181,8 @@ asset
 ```
 
 SQLite stores local metadata and relationships. It does not store large waveform or report files as database blobs.
+
+Derived evidence preserves the same capture/artifact model while carrying explicit parent identifiers and source hashes in the child manifest, summary, and SQLite metadata. Parent identity is resolved by exact source `run_id`; a manifest-provided capture ID is not treated as authoritative.
 
 Artifacts remain on the filesystem and are indexed by:
 
