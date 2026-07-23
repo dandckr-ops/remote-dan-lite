@@ -97,6 +97,17 @@ h1 span { color: var(--muted); font-weight: 400; }
 
 .overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .latest-card, .node-card, .workflow-card { min-height: 250px; }
+.usb-routing-card { grid-column: 1 / -1; }
+.usb-routing-body { padding: 18px; }
+.usb-routing-body > p:first-child { margin: 0 0 16px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.usb-routing-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); border: 1px solid var(--rule); }
+.usb-routing-device { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 86px; padding: 14px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.usb-routing-device strong, .usb-routing-device small { display: block; overflow-wrap: anywhere; }
+.usb-routing-device strong { color: var(--cream); font-size: 11px; }
+.usb-routing-device small { margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.usb-routing-device select { width: min(210px, 48%); font-size: 10px; }
+.usb-routing-apply { width: 100%; margin-top: 14px; }
+.usb-routing-apply:disabled { cursor: not-allowed; opacity: .5; }
 .digital-readout { display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 30px 18px 12px; }
 .digital-readout strong { color: var(--amber); font-family: var(--condensed); font-size: clamp(76px, 10vw, 132px); font-weight: 600; line-height: .8; letter-spacing: .025em; font-variant-numeric: tabular-nums; text-shadow: 0 0 28px rgba(255, 188, 66, .16); }
 .digital-readout span { color: var(--muted); font-family: var(--condensed); font-size: 30px; }

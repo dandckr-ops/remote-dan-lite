@@ -49,6 +49,7 @@ from remote_dan.modbus_scan import (
     ModbusSimulatorBackend,
 )
 from remote_dan.serial_analysis import SerialFraming
+from remote_dan.usb_inventory import list_usb_devices
 from remote_dan.serial_capture import (
     SerialCaptureBackend,
     SerialCaptureManager,
@@ -189,6 +190,7 @@ def create_app(
     network_probe: Callable[[], tuple[dict[str, str], ...]] = connected_ipv4_networks,
     modbus_backend: ModbusScanBackend | None = None,
     bus_survey_backend: BusSurveyBackend | None = None,
+    usb_inventory_probe: Callable[[], list[dict[str, str | None]]] = list_usb_devices,
 ) -> FastAPI:
     capture_dir = Path(data_dir)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +230,7 @@ def create_app(
     app.state.hardware_probe = hardware_probe
     app.state.serial_probe = serial_probe
     app.state.network_probe = network_probe
+    app.state.usb_inventory_probe = usb_inventory_probe
     app.state.simulator = simulator
     app.state.serial_simulator = serial_simulator
     app.state.modbus_simulator = modbus_simulator
@@ -405,6 +408,20 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except OSError as exc:
             raise HTTPException(status_code=502, detail=f"Modbus discovery failed: {exc}") from exc
+
+    @app.get("/api/usb/devices")
+    def usb_devices() -> dict[str, object]:
+        try:
+            devices = app.state.usb_inventory_probe()
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=f"USB inventory failed: {exc}") from exc
+        return {
+            "devices": devices,
+            "routing_control": {
+                "available": False,
+                "reason": "VirtualHere routing is not commissioned on this console yet.",
+            },
+        }
 
     @app.post("/api/serial/captures", status_code=201)
     def create_serial_capture(payload: SerialCapturePayload) -> dict[str, object]:

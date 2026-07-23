@@ -69,6 +69,16 @@
               <button class="action-link secondary" type="button" data-open-tab="can">Open CAN network capture</button>
             </div>
           </section>
+
+          <section class="panel usb-routing-card">
+            <div class="panel-heading compact"><div><span class="section-number">D</span><h2>USB routing</h2></div><span class="status-label planned" id="usb-routing-status">Inventory loading</span></div>
+            <div class="usb-routing-body">
+              <p>Every attached USB identity is listed from Linux. Routing remains read-only until the live VirtualHere server contract is inspected and commissioned.</p>
+              <div class="usb-routing-list" id="usb-routing-list" aria-live="polite"></div>
+              <button class="action-link usb-routing-apply" id="usb-routing-apply" type="button" disabled>Apply routing changes</button>
+              <p class="hardware-note">Available choices will be <strong>Local to Remote Dan Lite</strong> or <strong>Forward through VirtualHere</strong>. Unknown devices stay local by default.</p>
+            </div>
+          </section>
         </div>
       </section>
 

@@ -119,6 +119,60 @@ async function refreshStatus() {
   }
 }
 
+async function loadUsbRouting() {
+  const list = $("#usb-routing-list");
+  const status = $("#usb-routing-status");
+  const apply = $("#usb-routing-apply");
+  try {
+    const inventory = await getJson("/api/usb/devices");
+    const control = inventory.routing_control || {};
+    const devices = inventory.devices || [];
+    status.textContent = control.available ? "Routing ready" : "Read-only inventory";
+    status.className = `status-label ${control.available ? "live" : "planned"}`;
+    apply.disabled = !control.available;
+    list.replaceChildren(...devices.map((device) => {
+      const row = document.createElement("article");
+      row.className = "usb-routing-device";
+      const identity = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = device.product_name || `${device.vendor_id}:${device.product_id}`;
+      const detail = document.createElement("small");
+      detail.textContent = [
+        `${device.vendor_id}:${device.product_id}`,
+        device.serial ? `S/N ${device.serial}` : "no serial",
+        device.topology_path,
+      ].join(" · ");
+      identity.append(name, detail);
+      const route = document.createElement("select");
+      route.setAttribute("aria-label", `Routing for ${name.textContent}`);
+      route.disabled = !control.available;
+      [
+        ["local", "Local to Remote Dan Lite"],
+        ["virtualhere", "Forward through VirtualHere"],
+      ].forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        option.selected = device.route === value;
+        route.append(option);
+      });
+      row.append(identity, route);
+      return row;
+    }));
+    if (!devices.length) {
+      list.textContent = "No USB devices detected.";
+    }
+    if (!control.available) {
+      apply.title = control.reason || "VirtualHere routing is not commissioned.";
+    }
+  } catch (error) {
+    status.textContent = "Inventory unavailable";
+    status.className = "status-label error";
+    list.textContent = `USB inventory failed: ${error.message}`;
+    apply.disabled = true;
+  }
+}
+
 function channelControl(letter, name) {
   return $(`#scope-channel-${letter}-${name}`);
 }
@@ -891,6 +945,7 @@ bindModbusScanForm();
 $("#refresh").addEventListener("click", refreshRuns);
 loadScopeProfiles();
 loadModbusNetworks();
+loadUsbRouting();
 refreshStatus();
 refreshRuns();
 setInterval(refreshStatus, 15_000);

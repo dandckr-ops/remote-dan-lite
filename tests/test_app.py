@@ -30,6 +30,40 @@ def test_status_reports_degraded_hardware_and_available_simulator(tmp_path: Path
     assert payload["hardware"]["driver_available"] is False
 
 
+def test_usb_inventory_is_exposed_read_only_until_virtualhere_is_commissioned(tmp_path: Path) -> None:
+    app = create_app(
+        data_dir=tmp_path,
+        usb_inventory_probe=lambda: [{
+            "key": "usb:10c4:ea60:bridge-1:1-1",
+            "vendor_id": "10c4",
+            "product_id": "ea60",
+            "serial": "bridge-1",
+            "product_name": "CP210x UART Bridge",
+            "topology_path": "1-1",
+            "route": "unknown",
+        }],
+    )
+
+    response = TestClient(app).get("/api/usb/devices")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "devices": [{
+            "key": "usb:10c4:ea60:bridge-1:1-1",
+            "vendor_id": "10c4",
+            "product_id": "ea60",
+            "serial": "bridge-1",
+            "product_name": "CP210x UART Bridge",
+            "topology_path": "1-1",
+            "route": "unknown",
+        }],
+        "routing_control": {
+            "available": False,
+            "reason": "VirtualHere routing is not commissioned on this console yet.",
+        },
+    }
+
+
 def test_index_is_traceworks_capture_console(tmp_path: Path) -> None:
     app = create_app(data_dir=tmp_path)
 
