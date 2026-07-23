@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remote Dan Lite v1 — Traceworks Box Concept</title>
+  <style>
+    :root {
+      --bg: #07110d;
+      --bg2: #0b1612;
+      --panel: #0d1713;
+      --panel2: #12201a;
+      --ink: #d7efe3;
+      --muted: #87b89d;
+      --line: #244537;
+      --glow: #49f08a;
+      --glow-soft: rgba(73, 240, 138, 0.22);
+      --amber: #f3c55a;
+      --red: #ef6f6c;
+      --cyan: #61dff0;
+      --radius: 20px;
+      --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      --sans: "Inter", "Segoe UI", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top, rgba(73,240,138,0.10), transparent 30%),
+        linear-gradient(180deg, #06100c 0%, #040907 100%);
+      min-height: 100vh;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(73, 240, 138, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(73, 240, 138, 0.04) 1px, transparent 1px);
+      background-size: 36px 36px;
+      pointer-events: none;
+      opacity: 0.4;
+    }
+    .wrap {
+      position: relative;
+      max-width: 1720px;
+      margin: 0 auto;
+      padding: 40px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 32px;
+      align-items: flex-end;
+      margin-bottom: 30px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--glow); box-shadow: 0 0 16px var(--glow); }
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(34px, 5vw, 64px);
+      line-height: 0.95;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .sub {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.5;
+    }
+    .badge {
+      max-width: 430px;
+      border: 1px solid var(--line);
+      background: rgba(73,240,138,0.08);
+      color: var(--ink);
+      padding: 12px 16px;
+      border-radius: 18px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.5;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-align: right;
+      white-space: normal;
+      box-shadow: inset 0 0 0 1px rgba(73,240,138,0.05);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+    .panel {
+      background: linear-gradient(180deg, rgba(18,32,26,0.95), rgba(10,18,14,0.96));
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+      overflow: hidden;
+    }
+    .panel-hd {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 18px 22px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+    }
+    .panel-title {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .canvas { padding: 24px; }
+    .case {
+      position: relative;
+      border-radius: 32px;
+      display: grid;
+      gap: 22px;
+      padding: 30px;
+      background:
+        linear-gradient(160deg, #1a2520 0%, #0d1511 52%, #070c0a 100%);
+      border: 1px solid #22382d;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), inset 0 -14px 28px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+    .case::before {
+      content: "";
+      position: absolute;
+      inset: 14px;
+      border-radius: 24px;
+      border: 1px solid rgba(73, 240, 138, 0.12);
+      pointer-events: none;
+    }
+    .hinge-line {
+      position: relative;
+      height: 2px;
+      margin: 2px 0;
+      background: linear-gradient(90deg, transparent, rgba(73,240,138,0.25), transparent);
+    }
+    .lid {
+      position: relative;
+      min-height: 176px;
+      border-radius: 18px;
+      border: 1px solid #20372b;
+      background:
+        linear-gradient(135deg, rgba(73,240,138,0.06), rgba(73,240,138,0.02) 45%, rgba(255,255,255,0.01)),
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+      padding: 28px 300px 28px 30px;
+    }
+    .lid h2 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .lid p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 760px;
+    }
+    .tracebars {
+      position: absolute;
+      right: 30px;
+      top: 30px;
+      display: grid;
+      gap: 10px;
+      width: 220px;
+    }
+    .tracebars span {
+      display: block;
+      height: 8px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, rgba(73,240,138,0.18), rgba(73,240,138,0.92));
+      box-shadow: 0 0 20px rgba(73,240,138,0.20);
+    }
+    .tracebars span:nth-child(2){ width: 82%; margin-left: auto; }
+    .tracebars span:nth-child(3){ width: 58%; margin-left: auto; }
+    .truth-strip {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .truth-item {
+      min-height: 112px;
+      border: 1px solid #284a3b;
+      border-radius: 16px;
+      background: rgba(8, 18, 14, 0.82);
+      padding: 16px;
+    }
+    .truth-item strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--glow);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .truth-item[data-state="source"] strong { color: var(--cyan); }
+    .truth-item[data-state="designed"] strong { color: var(--amber); }
+    .truth-item[data-state="satellite"] strong { color: #c8a7ff; }
+    .truth-item span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .operator-surface {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+      border: 1px solid #20372b;
+      border-radius: 18px;
+      background: rgba(5, 9, 8, 0.42);
+    }
+    .operator-surface header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .tab-map { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tab-map span {
+      padding: 8px 11px;
+      border: 1px solid rgba(73,240,138,0.18);
+      border-radius: 999px;
+      background: rgba(73,240,138,0.06);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .operator-surface p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .lower {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(420px, 0.82fr) minmax(620px, 1.18fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .bay {
+      border-radius: 20px;
+      border: 1px solid #20372b;
+      background: rgba(5,9,8,0.40);
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
+    }
+    .bay::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(73, 240, 138, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(73, 240, 138, 0.03) 1px, transparent 1px);
+      background-size: 24px 24px;
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .bay-title {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .device-stack { display: grid; gap: 16px; position: relative; z-index: 1; }
+    .device {
+      min-height: 150px;
+      border-radius: 18px;
+      border: 1px solid #284a3b;
+      background: linear-gradient(180deg, rgba(18,29,24,0.96), rgba(9,14,12,0.98));
+      padding: 20px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .device h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-family: var(--mono);
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .device p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    .statrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(73,240,138,0.08);
+      border: 1px solid rgba(73,240,138,0.18);
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--ink);
+    }
+    .port-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px,1fr));
+      gap: 16px;
+      margin-top: 10px;
+    }
+    .port-group {
+      border-radius: 18px;
+      border: 1px solid #284a3b;
+      background: linear-gradient(180deg, rgba(18,29,24,0.96), rgba(9,14,12,0.98));
+      padding: 18px;
+    }
+    .port-group h4 {
+      margin: 0 0 10px;
+      color: var(--ink);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: var(--mono);
+    }
+    .port-group.satellite { grid-column: 1 / -1; }
+    .satellite-layout {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .satellite-note {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .ports { display: grid; gap: 10px; }
+    .port {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.015);
+      border: 1px solid rgba(255,255,255,0.03);
+      padding: 12px;
+      min-height: 68px;
+    }
+    .port > div:last-child { min-width: 0; }
+    .port .icon {
+      flex: 0 0 34px;
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      border: 1px solid rgba(73,240,138,0.30);
+      background: rgba(73,240,138,0.08);
+      display: grid; place-items: center;
+      color: var(--glow);
+      font-size: 11px;
+      font-family: var(--mono);
+    }
+    .port b {
+      display: block;
+      font-size: 12px;
+      line-height: 1.35;
+      font-family: var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      overflow-wrap: anywhere;
+    }
+    .port span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      padding: 18px;
+    }
+    .summary .panel-hd {
+      grid-column: 1 / -1;
+      margin: -18px -18px 0;
+    }
+    .card {
+      min-height: 190px;
+      padding: 22px;
+      border: 1px solid rgba(73,240,138,0.12);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.008));
+    }
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      line-height: 1.35;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      font-family: var(--mono);
+    }
+    .card p, .card li {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+    .card p { margin: 0; }
+    .card ul { margin: 10px 0 0 0; padding-left: 20px; }
+    .mini-diagram {
+      margin-top: 12px;
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid rgba(73,240,138,0.12);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--ink);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .footer-note {
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 13px;
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    @media (max-width: 1250px) {
+      .lower { grid-template-columns: 1fr; }
+      .truth-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+      .wrap { padding: 24px; }
+      .hero { flex-direction: column; align-items: flex-start; }
+      .badge { max-width: 100%; text-align: left; }
+      .lid { min-height: 0; padding: 24px; }
+      .tracebars { display: none; }
+      .summary { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 700px) {
+      .wrap { padding: 14px; }
+      .eyebrow { line-height: 1.5; }
+      h1 { font-size: clamp(32px, 12vw, 48px); line-height: 1; }
+      .sub { font-size: 16px; }
+      .panel { border-radius: 18px; }
+      .panel-hd { flex-direction: column; padding: 16px; }
+      .canvas { padding: 12px; }
+      .case { gap: 16px; padding: 16px; border-radius: 22px; }
+      .case::before { inset: 8px; border-radius: 16px; }
+      .lid h2 { font-size: 24px; line-height: 1.15; }
+      .truth-strip { grid-template-columns: 1fr; }
+      .truth-item { min-height: 0; }
+      .operator-surface header { flex-direction: column; gap: 6px; }
+      .bay { padding: 16px; }
+      .bay-title { align-items: flex-start; flex-direction: column; gap: 6px; }
+      .device { min-height: 0; padding: 16px; }
+      .port-grid { grid-template-columns: 1fr; }
+      .satellite-layout { grid-template-columns: 1fr; }
+      .port-group { padding: 14px; }
+      .port { min-height: 0; }
+      .summary { padding: 12px; }
+      .summary .panel-hd { margin: -12px -12px 0; }
+      .card { min-height: 0; padding: 18px; }
+      .footer-note { line-height: 1.6; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <div class="eyebrow"><span class="dot"></span> RootSignal / Traceworks industrial field instrument concept</div>
+        <h1>Remote Dan Lite<br/>Diagnostic Sidecar</h1>
+        <div class="sub">
+          A headless field evidence appliance built around three separate hardware planes: <b>capture</b>, <b>routing</b>, and <b>recovery</b>.
+          One session-centered operator surface indexes evidence locally and reaches protocol satellites through controlled network lanes. The laptop stays a laptop. The box stays tied to the machine.
+        </div>
+      </div>
+      <div class="badge">Traceworks language · disciplined green channels · dark diagnostic grid</div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <div class="panel-hd">
+          <div class="panel-title">Enclosure concept / Pelican-class field box</div>
+          <div class="panel-title">v1 / separated planes / external satellites / local evidence index</div>
+        </div>
+        <div class="canvas">
+          <div class="case">
+            <div class="lid">
+              <h2>Trace the fault. Prove the cause.</h2>
+              <p>
+                Session-centered local web surface for scope, CAN, serial, tests, timeline, and evidence.
+                Raw artifacts remain files; local SQLite indexes identity, lineage, measurements, and checksums.
+              </p>
+              <div class="tracebars"><span></span><span></span><span></span></div>
+            </div>
+            <div class="truth-strip" aria-label="Current project truth">
+              <article class="truth-item" data-state="proven"><strong>Proven now</strong><span>Pi 5 + PicoScope 2406B network capture produces VBAT/CAN evidence and downloadable raw artifacts.</span></article>
+              <article class="truth-item" data-state="source"><strong>In governed source</strong><span>SQLite schema and repository preserve asset → case → session → capture → artifact lineage. Production rollout is still pending.</span></article>
+              <article class="truth-item" data-state="designed"><strong>Designed</strong><span>The session-centered tab map is approved. The current live capture console remains single-page until that UI is implemented and deployed.</span></article>
+              <article class="truth-item" data-state="satellite"><strong>Connected satellite</strong><span>The Anybus AB7702 is configured and reachable for Modbus TCP/RTU. Remote Dan API/UI integration is still pending.</span></article>
+            </div>
+            <div class="operator-surface">
+              <header><span>Operator surface / primary tabs</span><span>one synchronized diagnostic session</span></header>
+              <nav class="tab-map" aria-label="Planned Remote Dan tabs">
+                <span>Overview</span><span>Scope</span><span>Serial</span><span>CAN</span><span>Tests</span><span>Timeline</span><span>Evidence</span>
+              </nav>
+              <p>Connections and System remain secondary setup surfaces. A tab configures or inspects the same session; it does not create a separate acquisition engine.</p>
+            </div>
+            <div class="hinge-line"></div>
+            <div class="lower">
+              <div class="bay">
+                <div class="bay-title"><span>Internal planes</span><span>Separated failure domains</span></div>
+                <div class="device-stack">
+                  <div class="device">
+                    <h3><span class="dot"></span> Capture plane</h3>
+                    <p>Pi 5 prototype, with x86 still available later if timing or driver needs justify it. The proven path owns Pico acquisition and artifact generation; governed source adds the local evidence index and session lineage.</p>
+                    <div class="statrow">
+                      <span class="chip">Pico hardware proven</span>
+                      <span class="chip">VBAT + CAN evidence</span>
+                      <span class="chip">SQLite metadata in source</span>
+                      <span class="chip">PDF / PNG / CSV / JSON</span>
+                    </div>
+                  </div>
+                  <div class="device">
+                    <h3><span class="dot"></span> Router / control plane</h3>
+                    <p>Small OpenWrt device handling service Ethernet, uplink modes, predictable addressing, and access to the capture UI without operator drama.</p>
+                    <div class="statrow">
+                      <span class="chip">DHCP</span>
+                      <span class="chip">Static fallback</span>
+                      <span class="chip">Truck uplink</span>
+                      <span class="chip">Service LAN</span>
+                    </div>
+                  </div>
+                  <div class="device">
+                    <h3><span class="dot"></span> OOB / recovery plane</h3>
+                    <p>Independent watchdog and recovery node that verifies health and can power-cycle the capture node if it becomes unresponsive in the field.</p>
+                    <div class="statrow">
+                      <span class="chip">Heartbeat</span>
+                      <span class="chip">Hard reboot</span>
+                      <span class="chip">Recovery state</span>
+                    </div>
+                  </div>
+                  <div class="device">
+                    <h3><span class="dot"></span> Power subsystem</h3>
+                    <p>Bench AC and 12/24 VDC input feeding one regulated internal bus with fused, transient-tolerant, field-grade protection.</p>
+                    <div class="statrow">
+                      <span class="chip">IEC AC</span>
+                      <span class="chip">12/24 VDC</span>
+                      <span class="chip">Fused</span>
+                      <span class="chip">Protected</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bay">
+                <div class="bay-title"><span>Externalized I/O + satellites</span><span>Every port and protocol lane has a job</span></div>
+                <div class="port-grid">
+                  <div class="port-group">
+                    <h4>Scope</h4>
+                    <div class="ports">
+                      <div class="port"><div class="icon">A</div><div><b>CH-A / VBAT</b><span>battery / supply / low-speed analog</span></div></div>
+                      <div class="port"><div class="icon">B</div><div><b>CH-B / SIG-H</b><span>signal channel / can high / sync source</span></div></div>
+                      <div class="port"><div class="icon">C</div><div><b>CH-C / SIG-L</b><span>signal channel / can low / companion trace</span></div></div>
+                      <div class="port"><div class="icon">D</div><div><b>CH-D / TRIG</b><span>trigger / event / auxiliary analog</span></div></div>
+                    </div>
+                  </div>
+                  <div class="port-group">
+                    <h4>Bus + serial</h4>
+                    <div class="ports">
+                      <div class="port"><div class="icon">C1</div><div><b>CAN-1 / J1939</b><span>primary vehicle/equipment bus</span></div></div>
+                      <div class="port"><div class="icon">C2</div><div><b>CAN-2 / AUX</b><span>secondary bus / compare / gateway</span></div></div>
+                      <div class="port"><div class="icon">S1</div><div><b>SER-1 / SEL-RS232</b><span>dedicated SEL / service serial</span></div></div>
+                      <div class="port"><div class="icon">S2</div><div><b>SER-2 / RS485 TAP</b><span>raw field-bus electrical and timing evidence</span></div></div>
+                    </div>
+                  </div>
+                  <div class="port-group">
+                    <h4>Network</h4>
+                    <div class="ports">
+                      <div class="port"><div class="icon">E1</div><div><b>ETH-OP / SERVICE</b><span>laptop direct-connect operator lane</span></div></div>
+                      <div class="port"><div class="icon">E2</div><div><b>ETH-UP / LAN</b><span>truck switch/router uplink</span></div></div>
+                      <div class="port"><div class="icon">E3</div><div><b>ETH-TG / TARGET</b><span>target device adjacency / isolated segment</span></div></div>
+                      <div class="port"><div class="icon">MG</div><div><b>MGMT / OOB</b><span>optional recovery-facing management port</span></div></div>
+                    </div>
+                  </div>
+                  <div class="port-group">
+                    <h4>Power + controls</h4>
+                    <div class="ports">
+                      <div class="port"><div class="icon">AC</div><div><b>IEC AC IN</b><span>bench / shop mains input</span></div></div>
+                      <div class="port"><div class="icon">DC</div><div><b>12/24V DC IN</b><span>vehicle/equipment power</span></div></div>
+                      <div class="port"><div class="icon">AR</div><div><b>ARM / CAPTURE</b><span>bounded field capture action</span></div></div>
+                      <div class="port"><div class="icon">MK</div><div><b>MARK / EVENT</b><span>operator event marker</span></div></div>
+                    </div>
+                  </div>
+                  <div class="port-group satellite">
+                    <h4>Modbus satellite / Anybus AB7702</h4>
+                    <div class="satellite-layout">
+                      <div class="port"><div class="icon">TCP</div><div><b>LAN / MODBUS TCP</b><span>bounded transaction path from the sidecar</span></div></div>
+                      <div class="port"><div class="icon">GW</div><div><b>External gateway</b><span>configured, reachable, and separate from the enclosure</span></div></div>
+                      <div class="port"><div class="icon">RTU</div><div><b>RS-485 / MODBUS RTU</b><span>field-device side; begin read-only</span></div></div>
+                    </div>
+                    <p class="satellite-note">The gateway is a structured protocol adapter, not a raw serial analyzer. Electrical levels, byte timing, CRC faults, and collisions still require the direct RS-485 tap or scope lane. Remote Dan integration must log each bounded request and remain fail-closed for writes.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="footer-note">Visual direction: Signal Foundry core + Traceworks instrument language + Field Journal evidence output</div>
+        </div>
+      </section>
+
+      <aside class="panel summary">
+        <div class="panel-hd">
+          <div class="panel-title">Design notes</div>
+          <div class="panel-title">Why this shape works</div>
+        </div>
+        <div class="card">
+          <h3>Product boundary</h3>
+          <p>
+            A session-centered evidence appliance. Capture engines, protocol satellites, evidence storage, and the operator UI cooperate without pretending every capability lives in one board or one process.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Why the three-plane split matters</h3>
+          <ul>
+            <li>If capture hangs, routing still exists.</li>
+            <li>If the router is fine but the Pi wedges, OOB can recover it.</li>
+            <li>The operator does not lose the laptop to the car-side hardware mess.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Target session bundle</h3>
+          <p>One bounded diagnostic session is intended to correlate:</p>
+          <ul>
+            <li>Pico waveforms</li>
+            <li>CAN log</li>
+            <li>serial trace</li>
+            <li>battery voltage</li>
+            <li>bounded Modbus transaction log</li>
+            <li>event markers</li>
+            <li>PDF summary + raw files</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Internal topology</h3>
+          <div class="mini-diagram">AC IEC ----\
+           > power ---- router
+12/24V ----/          ├─ capture node
+                      └─ OOB node
+
+operator ETH --------> router
+uplink ETH ----------> router
+router <-------------> capture
+router <-------------> OOB
+router <---- LAN ----> Modbus satellite ---- RS-485 target
+capture ---- metadata -> local SQLite
+capture ---- artifacts -> local filesystem
+OOB ---- power-cycle -> capture</div>
+        </div>
+        <div class="card">
+          <h3>Evidence index</h3>
+          <p>SQLite stores metadata and durable lineage: asset → case → session → capture → artifact. Waveform CSV, PNG, PDF, JSON, and future protocol logs remain ordinary files with database IDs, paths, sizes, media types, and SHA-256 checksums.</p>
+        </div>
+        <div class="card">
+          <h3>Modbus boundary</h3>
+          <p>The Anybus gateway is a LAN satellite for structured Modbus TCP-to-RTU transactions. It does not replace the direct isolated serial or scope lane required for raw electrical and timing evidence.</p>
+        </div>
+        <div class="card">
+          <h3>Brand carryover</h3>
+          <ul>
+            <li><b>Signal Foundry:</b> identity and exterior presence</li>
+            <li><b>Traceworks:</b> dark instrument skin with disciplined green channel accents</li>
+            <li><b>Field Journal:</b> report and artifact output styling</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+  </div>
+</body>
+</html>

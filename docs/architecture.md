@@ -1,0 +1,245 @@
+# Remote Dan Lite architecture and status boundaries
+
+This document separates product architecture from implementation status. A component can belong in the v1 architecture without being commissioned in the current appliance runtime.
+
+## Status vocabulary
+
+| Status | Meaning |
+|---|---|
+| **Proven** | Exercised through the real hardware or live service path with inspectable output. |
+| **In governed source** | Implemented and tested in Git, but not necessarily deployed to the appliance. |
+| **Designed** | Accepted product/interaction architecture that still requires implementation. |
+| **Connected satellite** | External hardware is configured and reachable, but the Remote Dan API/UI path may still be pending. |
+| **Deferred** | Deliberately outside the current implementation slice. |
+
+At the current repository baseline:
+
+- Pi 5 + PicoScope 2406B network capture is **proven**.
+- CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
+- SQLite metadata and evidence lineage are **in governed source**.
+- The session-centered tabs are **designed**.
+- The Anybus AB7702 is a **connected satellite**; Remote Dan integration is pending.
+- The complete three-device enclosure and independent recovery hardware remain an architecture target.
+
+## Product doctrine
+
+Remote Dan Lite is a synchronized evidence appliance, not an automated diagnostician.
+
+It should:
+
+- keep capture hardware attached to the machine
+- keep the technician's laptop available as a normal workstation
+- capture bounded, repeatable event windows
+- preserve raw artifacts before interpretation
+- record derived calculations and confidence separately from operator findings
+- correlate evidence from multiple acquisition lanes inside one diagnostic session
+- fail closed for unavailable hardware and consequential protocol writes
+
+## Three hardware planes
+
+### Capture plane
+
+Owns:
+
+- PicoScope acquisition
+- CAN and serial acquisition adapters as they are commissioned
+- artifact generation
+- local web service
+- SQLite metadata and lineage
+- event markers and common session time context
+- evidence publication to the operator laptop
+
+The capture plane does not own field routing or independent recovery authority.
+
+### Routing/control plane
+
+Owns:
+
+- predictable service addressing
+- direct laptop access
+- shop/truck uplink
+- target-device adjacency or isolated target segment
+- reachability to external protocol satellites
+
+A small dedicated OpenWrt-style device is the default target when these network modes become part of the physical enclosure.
+
+### Recovery/OOB plane
+
+Owns:
+
+- capture-node health checks
+- heartbeat monitoring
+- bounded reboot or power-cycle authority
+- minimal independent recovery status
+
+It should remain simpler than the capture node and should not depend on the capture service to perform recovery.
+
+## Session-centered operator surface
+
+The approved primary tabs are:
+
+1. **Overview** — hardware readiness, supply voltage, synchronization, storage, capture state, and recent sessions
+2. **Scope** — general waveform acquisition and review
+3. **Serial** — raw serial configuration, capture, and decode evidence
+4. **CAN** — listen-only acquisition, bus measurements, and decode evidence
+5. **Tests** — guided workflows that configure the shared acquisition engines
+6. **Timeline** — correlated scope, CAN, serial, test, and operator events
+7. **Evidence** — session packages, lineage, raw artifacts, calculations, reports, and operator findings
+
+Connections and System remain secondary setup areas.
+
+A tab is a view or configuration surface over the same session. It must not duplicate the scope, CAN, serial, or evidence implementation.
+
+### Guided tests
+
+Relative compression, cylinder contribution, alternator ripple, injector current, and cam/crank correlation belong under **Tests**, not inside the generic Scope page.
+
+A guided workflow should follow:
+
+```text
+Purpose
+  → connection instructions
+  → signal-quality check
+  → armed bounded capture
+  → deterministic calculation
+  → confidence/limitations
+  → operator findings
+  → evidence package
+```
+
+The system may support a technician's diagnosis, but it should not overstate a calculation as a definitive cause.
+
+## Evidence model
+
+The durable metadata lineage is:
+
+```text
+asset
+  └── diagnostic case
+       └── session
+            └── capture
+                 ├── artifact
+                 ├── channel configuration
+                 ├── event marker
+                 └── test result
+```
+
+SQLite stores local metadata and relationships. It does not store large waveform or report files as database blobs.
+
+Artifacts remain on the filesystem and are indexed by:
+
+- database ID
+- capture ID
+- kind
+- filename
+- relative path
+- media type
+- byte size
+- SHA-256 checksum
+
+This keeps the appliance simple and locally recoverable while leaving a clean migration path if a central service is justified later.
+
+## Pico capture boundary
+
+The proven Pico path currently acquires:
+
+- Channel A: VBAT through configured attenuation
+- Channel B: CAN-H
+- Channel C: CAN-L
+
+It derives:
+
+- per-channel min/max/mean/peak-to-peak/standard deviation
+- B-minus-C differential
+- CAN common mode
+- CAN-H/CAN-L correlation
+
+Raw samples stay in CSV. Summary values stay in JSON and the manifest. The browser may present VBAT as a two-decimal digital value while preserving the full VBAT waveform in raw evidence.
+
+Hardware readiness requires more than importing `picosdk`:
+
+1. matching native PS2000A library
+2. correct CPU ABI
+3. USB enumeration and permissions
+4. successful open-unit probe
+5. bounded acquisition
+6. artifact generation
+7. artifact download and checksum verification
+
+## Modbus satellite boundary
+
+The Anybus AB7702 is external to the Remote Dan enclosure. It bridges structured Modbus TCP transactions to the configured RS-485 Modbus RTU field side.
+
+The intended path is:
+
+```text
+operator browser
+  → authenticated Remote Dan API
+  → private LAN
+  → Anybus gateway
+  → RS-485 Modbus RTU field device
+```
+
+Initial integration must be read-only.
+
+Every request should record:
+
+- session and operator context
+- gateway identity
+- unit/target ID
+- function code
+- address and quantity/range
+- decoded values and raw response where appropriate
+- start/end time and duration
+- timeout/protocol/exception classification
+
+The gateway is not raw serial evidence. It cannot prove line levels, framing timing, CRC corruption on failed frames, collisions, or non-Modbus traffic. Those require a direct isolated serial adapter or scope tap.
+
+Future writes must require a separate, explicit, bounded unlock with visible target/function/address scope. Do not expose Modbus TCP/502 through public ingress.
+
+## CAN authority boundary
+
+CAN starts listen-only. Active transmission, replay, fuzzing, or stimulus does not belong in the ordinary CAN tab.
+
+If added later, active operations require a separately armed **Stimulus** mode with:
+
+- explicit target/bus selection
+- bounded message allowlist
+- visible timing and count limits
+- operator confirmation
+- complete action logging
+- fail-closed cancellation and timeout behavior
+
+## Power and connector boundary
+
+The enclosure target supports protected bench AC and 12/24 VDC input feeding a regulated internal bus. The design must account for:
+
+- fusing
+- reverse polarity
+- transient/load-dump tolerance
+- grounding between scope, serial, CAN, USB, Ethernet, and vehicle/equipment power
+- labeled fixed-role ports rather than ambiguous switching
+
+Dedicated serial ports remain preferable to a general-purpose multiplexer until electrical standards and use cases are stable.
+
+## Source/runtime topology
+
+The public Git repository is the governed source. The appliance under `/opt/remote-dan-lite` is a deployed runtime and is not itself a Git checkout.
+
+Publication and deployment are separate operations:
+
+- a GitHub push updates governed public source
+- a deployment copies an approved source revision into the appliance runtime and may restart the service
+
+Do not infer that a feature is live because it appears in Git. Conversely, runtime evidence should be reconciled into governed source rather than becoming permanent hand-edited drift.
+
+## Current next slices
+
+1. Present VBAT as a digital `xx.xx V` value while preserving its raw samples.
+2. Reconcile and deploy the database-backed source revision to the appliance.
+3. Add asset/case/session API surfaces.
+4. Build Overview and persistent session context.
+5. Add the remaining primary tab shells without duplicating acquisition engines.
+6. Integrate the Anybus satellite read-only with durable transaction logging.
+7. Add timeline correlation and guided test workflows.
+8. Commission independent recovery hardware and the final enclosure.
