@@ -302,9 +302,18 @@ class OBDService:
                 except OBDProtocolError as exc:
                     errors.append({"command": "0902", "ecu": ecu, "error": str(exc)})
             distinct = {item["vin"] for item in vins}
+            if vins and errors:
+                vin_status = "partial"
+            elif vins:
+                vin_status = "complete"
+            elif errors:
+                vin_status = "error"
+            else:
+                vin_status = "no_data"
             return {
                 "observed_at": _utc_now(),
                 "vins": vins,
+                "vin_status": vin_status,
                 "vin_mismatch": len(distinct) > 1,
                 "provider": self._identity["provider"],
                 "adapter_identity": self._identity["adapter_identity"],

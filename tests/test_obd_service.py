@@ -46,6 +46,13 @@ class WrongPidResponderProvider(SimulatorOBDProvider):
         return super().query(canonical)
 
 
+class NoVinProvider(SimulatorOBDProvider):
+    def query(self, command: str) -> str:
+        if command.replace(" ", "").upper() == "0902":
+            return "NO DATA\r>"
+        return super().query(command)
+
+
 def test_obd_service_connects_and_discovers_supported_pids(tmp_path: Path) -> None:
     database = EvidenceDatabase(tmp_path / "remote-dan.sqlite3")
     database.initialize()
@@ -117,8 +124,22 @@ def test_obd_service_reads_vin_without_silently_merging_ecus(tmp_path: Path) -> 
         {"ecu": "7E8", "vin": "RDLTEST1234567890"},
     ]
     assert vehicle["vin_mismatch"] is False
+    assert vehicle["vin_status"] == "complete"
     assert vehicle["protocol"].startswith("ISO 15765-4")
     assert vehicle["adapter_identity"].startswith("OBDLink SX simulator")
+
+
+def test_obd_service_classifies_no_vin_response_as_no_data(tmp_path: Path) -> None:
+    database = EvidenceDatabase(tmp_path / "remote-dan.sqlite3")
+    database.initialize()
+    service = OBDService(database=database, simulator_provider=NoVinProvider())
+    service.connect(mode="simulator", session_id=None)
+
+    vehicle = service.read_vehicle_info()
+
+    assert vehicle["vins"] == []
+    assert vehicle["errors"] == []
+    assert vehicle["vin_status"] == "no_data"
 
 
 def test_obd_service_hardware_clear_remains_fail_closed_without_operator_auth(
@@ -181,6 +202,7 @@ def test_obd_service_preserves_valid_ecu_results_when_another_ecu_is_invalid(
     assert faults["stored_status"] == "partial"
     assert any(item.get("ecu") == "7E9" for item in faults["errors"])
     assert vehicle["vins"] == [{"ecu": "7E8", "vin": "RDLTEST1234567890"}]
+    assert vehicle["vin_status"] == "partial"
     assert any(item.get("ecu") == "7E9" for item in vehicle["errors"])
 
 

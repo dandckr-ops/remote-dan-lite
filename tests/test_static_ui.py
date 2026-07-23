@@ -464,10 +464,33 @@ def test_obd_browser_code_fences_reads_recovers_polling_and_has_uuid_fallback() 
 def test_changed_static_assets_use_combined_release_cache_key() -> None:
     markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert "/static/app.css?v=can-obd-imperial-v2" in markup
-    assert "/static/app.js?v=can-obd-imperial-v2" in markup
+    assert "/static/app.css?v=obd-truth-v3" in markup
+    assert "/static/app.js?v=obd-truth-v3" in markup
     assert "/static/can_request_gate.js?v=can-decode-v1-remediation2" in markup
     assert "bus-discovery-1" not in markup
+
+
+def test_obd_fault_and_vehicle_views_state_exact_scope_and_availability() -> None:
+    markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    fault_panel = markup.split('id="obd-panel-faults"', 1)[1].split('id="obd-panel-vehicle-info"', 1)[0]
+    vehicle_panel = markup.split('id="obd-panel-vehicle-info"', 1)[1].split('id="obd-panel-records"', 1)[0]
+
+    assert "Generic emissions DTCs only" in fault_panel
+    assert "Mode $03 · Confirmed/stored" in fault_panel
+    assert "Mode $07 · Pending" in fault_panel
+    assert "Mode $0A · Permanent" in fault_panel
+    assert all(f'id="obd-{state}-status"' in fault_panel for state in ("stored", "pending", "permanent"))
+    assert "Vehicle ID" in vehicle_panel
+    assert "Mode $09 PID $02 VIN only" in vehicle_panel
+    assert "VIN validation" in vehicle_panel
+    assert "VIN reporting coverage" in vehicle_panel
+    assert "<dt>Protocol</dt>" not in vehicle_panel
+    assert "<dt>Adapter</dt>" not in vehicle_panel
+    assert "<dt>Detected ECUs</dt>" not in vehicle_panel
+    assert 'payload.vin_status === "partial"' in script
+    assert 'payload.vin_status === "no_data"' in script
+    assert 'status === "no_data" ? "Unavailable"' in script
 
 
 def test_operator_source_selectors_do_not_offer_simulator_or_auto_fallback() -> None:

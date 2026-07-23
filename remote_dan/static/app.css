@@ -345,6 +345,7 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .obd-fault-grid > section { padding: 18px; border-right: 1px solid var(--rule); }
 .obd-fault-grid > section:last-child { border-right: 0; }
 .obd-fault-grid h3 span { color: var(--live); }
+.obd-service-status { margin: -6px 0 12px; color: var(--amber); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
 .obd-fault-grid ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .obd-fault-grid li { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--rule); color: var(--muted); font-size: 10px; }
 .obd-fault-grid li strong { color: var(--cream); font-family: var(--condensed); font-size: 20px; }

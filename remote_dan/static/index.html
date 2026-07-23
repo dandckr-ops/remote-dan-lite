@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=can-obd-imperial-v2">
+  <link rel="stylesheet" href="/static/app.css?v=obd-truth-v3">
 </head>
 <body>
   <div class="shell">
@@ -400,8 +400,8 @@
         <nav class="obd-subnav" aria-label="OBD views">
           <div class="obd-tab-bar" role="tablist" aria-label="OBD workspaces">
             <button type="button" role="tab" id="obd-tab-live-data" data-obd-tab="live-data" aria-controls="obd-panel-live-data" aria-selected="true" tabindex="0">Live Data</button>
-            <button type="button" role="tab" id="obd-tab-faults" data-obd-tab="faults" aria-controls="obd-panel-faults" aria-selected="false" tabindex="-1">Faults</button>
-            <button type="button" role="tab" id="obd-tab-vehicle-info" data-obd-tab="vehicle-info" aria-controls="obd-panel-vehicle-info" aria-selected="false" tabindex="-1">Vehicle Info</button>
+            <button type="button" role="tab" id="obd-tab-faults" data-obd-tab="faults" aria-controls="obd-panel-faults" aria-selected="false" tabindex="-1">Emissions DTCs</button>
+            <button type="button" role="tab" id="obd-tab-vehicle-info" data-obd-tab="vehicle-info" aria-controls="obd-panel-vehicle-info" aria-selected="false" tabindex="-1">Vehicle ID</button>
             <button type="button" role="tab" id="obd-tab-records" data-obd-tab="records" aria-controls="obd-panel-records" aria-selected="false" tabindex="-1">Records</button>
           </div>
         </nav>
@@ -418,18 +418,19 @@
 
         <section class="panel obd-subpanel" id="obd-panel-faults" role="tabpanel" aria-labelledby="obd-tab-faults" data-obd-panel="faults" hidden>
           <div class="panel-heading">
-            <div><span class="section-number">06B</span><h2>Faults and readiness</h2></div>
+            <div><span class="section-number">06B</span><h2>Generic emissions DTCs and readiness</h2></div>
             <div class="obd-actions"><button class="plain-button" id="obd-fault-refresh-button" type="button" disabled>Read faults</button><button class="plain-button" id="obd-fault-save-button" type="button" disabled>Read and save</button></div>
           </div>
+          <p class="obd-boundary">Generic emissions DTCs only from SAE J1979 services on responding powertrain ECUs. This is not a full Subaru module fault scan.</p>
           <div class="message" id="obd-fault-message" aria-live="polite">No fault snapshot loaded.</div>
           <section class="obd-readiness" aria-labelledby="obd-readiness-heading">
             <h3 id="obd-readiness-heading">MIL and readiness monitors</h3>
             <div id="obd-readiness-list"><p class="empty-list">No readiness response loaded.</p></div>
           </section>
           <div class="obd-fault-grid">
-            <section aria-labelledby="obd-stored-heading"><h3 id="obd-stored-heading">Stored <span id="obd-stored-count">0</span></h3><ul id="obd-stored-list"><li>No stored DTCs loaded.</li></ul></section>
-            <section aria-labelledby="obd-pending-heading"><h3 id="obd-pending-heading">Pending <span id="obd-pending-count">0</span></h3><ul id="obd-pending-list"><li>No pending DTCs loaded.</li></ul></section>
-            <section aria-labelledby="obd-permanent-heading"><h3 id="obd-permanent-heading">Permanent <span id="obd-permanent-count">0</span></h3><ul id="obd-permanent-list"><li>No permanent DTCs loaded.</li></ul></section>
+            <section aria-labelledby="obd-stored-heading"><h3 id="obd-stored-heading">Mode $03 · Confirmed/stored <span id="obd-stored-count">—</span></h3><p class="obd-service-status" id="obd-stored-status">Not read</p><ul id="obd-stored-list"><li>No stored DTC read loaded.</li></ul></section>
+            <section aria-labelledby="obd-pending-heading"><h3 id="obd-pending-heading">Mode $07 · Pending <span id="obd-pending-count">—</span></h3><p class="obd-service-status" id="obd-pending-status">Not read</p><ul id="obd-pending-list"><li>No pending DTC read loaded.</li></ul></section>
+            <section aria-labelledby="obd-permanent-heading"><h3 id="obd-permanent-heading">Mode $0A · Permanent <span id="obd-permanent-count">—</span></h3><p class="obd-service-status" id="obd-permanent-status">Not read</p><ul id="obd-permanent-list"><li>No permanent DTC read loaded.</li></ul></section>
           </div>
           <section class="obd-clear-panel" aria-labelledby="obd-clear-heading">
             <h3 id="obd-clear-heading">Clear emissions diagnostic information · Mode $04</h3>
@@ -442,16 +443,16 @@
 
         <section class="panel obd-subpanel" id="obd-panel-vehicle-info" role="tabpanel" aria-labelledby="obd-tab-vehicle-info" data-obd-panel="vehicle-info" hidden>
           <div class="panel-heading">
-            <div><span class="section-number">06C</span><h2>Vehicle Info</h2></div>
-            <div class="obd-actions"><button class="plain-button" id="obd-vehicle-refresh-button" type="button" disabled>Read vehicle info</button><button class="plain-button" id="obd-vehicle-save-button" type="button" disabled>Read and save</button></div>
+            <div><span class="section-number">06C</span><h2>Vehicle ID</h2></div>
+            <div class="obd-actions"><button class="plain-button" id="obd-vehicle-refresh-button" type="button" disabled>Read VIN</button><button class="plain-button" id="obd-vehicle-save-button" type="button" disabled>Read and save</button></div>
           </div>
-          <div class="message" id="obd-vehicle-message" aria-live="polite">No Mode $09 vehicle information loaded.</div>
+          <p class="obd-boundary">Mode $09 PID $02 VIN only. Adapter, protocol, and responding ECU details remain in the connection summary above.</p>
+          <div class="message" id="obd-vehicle-message" aria-live="polite">No Mode $09 VIN response loaded.</div>
           <dl class="obd-vehicle-facts">
-            <div><dt>VIN reported by ECU</dt><dd id="obd-vin">—</dd></div>
-            <div><dt>VIN source ECU</dt><dd id="obd-vin-ecu">—</dd></div>
-            <div><dt>Protocol</dt><dd id="obd-vehicle-protocol">—</dd></div>
-            <div><dt>Adapter</dt><dd id="obd-adapter-identity">—</dd></div>
-            <div><dt>Detected ECUs</dt><dd id="obd-ecu-list">—</dd></div>
+            <div><dt>VIN reported by ECM</dt><dd id="obd-vin">—</dd></div>
+            <div><dt>Reporting ECM response ID</dt><dd id="obd-vin-ecu">—</dd></div>
+            <div><dt>VIN validation</dt><dd id="obd-vin-validation">—</dd></div>
+            <div><dt>VIN reporting coverage</dt><dd id="obd-vin-coverage">—</dd></div>
           </dl>
         </section>
 
@@ -541,6 +542,6 @@
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
   <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=can-obd-imperial-v2" defer></script>
+  <script src="/static/app.js?v=obd-truth-v3" defer></script>
 </body>
 </html>

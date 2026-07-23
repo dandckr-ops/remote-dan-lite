@@ -1332,9 +1332,9 @@ function clearObdReadings(reason = "Disconnected. Previous readings are no longe
   $("#obd-live-list").replaceChildren(liveEmpty);
   $("#obd-live-updated").textContent = "Last update: —";
   setMessage("#obd-live-message", reason);
-  renderDtcList("#obd-stored-list", "#obd-stored-count", [], "No current stored DTC snapshot.");
-  renderDtcList("#obd-pending-list", "#obd-pending-count", [], "No current pending DTC snapshot.");
-  renderDtcList("#obd-permanent-list", "#obd-permanent-count", [], "No current permanent DTC snapshot.");
+  renderDtcList("#obd-stored-list", "#obd-stored-count", "#obd-stored-status", [], "not_read", "No current stored DTC snapshot.");
+  renderDtcList("#obd-pending-list", "#obd-pending-count", "#obd-pending-status", [], "not_read", "No current pending DTC snapshot.");
+  renderDtcList("#obd-permanent-list", "#obd-permanent-count", "#obd-permanent-status", [], "not_read", "No current permanent DTC snapshot.");
   const readinessEmpty = document.createElement("p");
   readinessEmpty.className = "empty-list";
   readinessEmpty.textContent = "No current readiness response.";
@@ -1342,9 +1342,8 @@ function clearObdReadings(reason = "Disconnected. Previous readings are no longe
   setMessage("#obd-fault-message", reason);
   $("#obd-vin").textContent = "—";
   $("#obd-vin-ecu").textContent = "—";
-  $("#obd-vehicle-protocol").textContent = "—";
-  $("#obd-adapter-identity").textContent = "—";
-  $("#obd-ecu-list").textContent = "—";
+  $("#obd-vin-validation").textContent = "—";
+  $("#obd-vin-coverage").textContent = "—";
   setMessage("#obd-vehicle-message", reason);
 }
 
@@ -1468,8 +1467,15 @@ function scheduleObdLivePoll(delayOverride = null) {
   }, delay);
 }
 
-function renderDtcList(selector, countSelector, items, emptyText) {
-  $(countSelector).textContent = String(items.length);
+function renderDtcList(selector, countSelector, statusSelector, items, status, emptyText) {
+  const hasDefensibleCount = status === "complete" || status === "partial";
+  $(countSelector).textContent = hasDefensibleCount ? String(items.length) : "—";
+  const statusLabel = status === "no_data" ? "Unavailable"
+    : status === "error" ? "Read failed"
+    : status === "partial" ? "Partial read"
+    : status === "complete" ? "Read complete"
+    : "Not read";
+  $(statusSelector).textContent = statusLabel;
   const list = $(selector);
   if (!items.length) {
     const item = document.createElement("li");
@@ -1492,9 +1498,9 @@ function renderDtcList(selector, countSelector, items, emptyText) {
 
 function renderObdFaults(payload) {
   state.obd.faults = payload;
-  renderDtcList("#obd-stored-list", "#obd-stored-count", payload.stored || [], payload.stored_status === "error" ? "Stored-code service failed." : "No stored DTCs returned.");
-  renderDtcList("#obd-pending-list", "#obd-pending-count", payload.pending || [], payload.pending_status === "error" ? "Pending-code service failed." : "No pending DTCs returned.");
-  renderDtcList("#obd-permanent-list", "#obd-permanent-count", payload.permanent || [], payload.permanent_status === "error" ? "Permanent-code service failed." : payload.permanent_status === "no_data" ? "Permanent-code service returned no data." : "No permanent DTCs returned.");
+  renderDtcList("#obd-stored-list", "#obd-stored-count", "#obd-stored-status", payload.stored || [], payload.stored_status, payload.stored_status === "error" ? "Mode $03 read failed." : payload.stored_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $03." : "ECM returned zero confirmed/stored DTCs.");
+  renderDtcList("#obd-pending-list", "#obd-pending-count", "#obd-pending-status", payload.pending || [], payload.pending_status, payload.pending_status === "error" ? "Mode $07 read failed." : payload.pending_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $07." : "ECM returned zero pending DTCs.");
+  renderDtcList("#obd-permanent-list", "#obd-permanent-count", "#obd-permanent-status", payload.permanent || [], payload.permanent_status, payload.permanent_status === "error" ? "Mode $0A read failed." : payload.permanent_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $0A." : "ECM returned zero permanent DTCs.");
   const readiness = payload.readiness || [];
   const readinessList = $("#obd-readiness-list");
   if (!readiness.length) {
@@ -1513,15 +1519,32 @@ function renderObdFaults(payload) {
       return card;
     }));
   }
-  const total = (payload.stored?.length || 0) + (payload.pending?.length || 0) + (payload.permanent?.length || 0);
-  const failedDtcStates = ["stored", "pending", "permanent"].filter((stateName) => payload[`${stateName}_status`] === "error");
+  const states = ["stored", "pending", "permanent"];
+  const failedDtcStates = states.filter((stateName) => ["error", "partial"].includes(payload[`${stateName}_status`]));
+  const unavailableDtcStates = states.filter((stateName) => payload[`${stateName}_status`] === "no_data");
   const errorCount = (payload.errors || []).length;
-  if (failedDtcStates.length === 3) {
+  const readinessStoredCount = readiness.reduce((sum, item) => sum + Number(item.dtc_count || 0), 0);
+  const storedCountMismatch = readiness.length > 0 && payload.stored_status === "complete" && readinessStoredCount !== (payload.stored?.length || 0);
+  const stateLabels = {stored: "confirmed/stored", pending: "pending", permanent: "permanent"};
+  const summaries = states.map((stateName) => {
+    const status = payload[`${stateName}_status`];
+    return status === "complete" || status === "partial"
+      ? `${payload[stateName]?.length || 0} ${stateLabels[stateName]}`
+      : `${stateLabels[stateName]} unavailable`;
+  }).join(" · ");
+  if (storedCountMismatch) {
+    setMessage("#obd-fault-message", `Count mismatch: readiness reports ${readinessStoredCount} stored DTCs but Mode $03 decoded ${payload.stored?.length || 0}. Treat this read as unverified.`, "error");
+  } else if (failedDtcStates.length === 3) {
     setMessage("#obd-fault-message", "All DTC service reads failed; zero counts are not valid no-code results.", "error");
   } else if (failedDtcStates.length || errorCount) {
-    setMessage("#obd-fault-message", `${total} DTC observations read with ${errorCount} communication/decode errors.`, "error");
+    setMessage("#obd-fault-message", `${summaries}. ${errorCount} communication/decode errors. Generic emissions only.`, "error");
+  } else if (unavailableDtcStates.length) {
+    const unavailableLabels = unavailableDtcStates.map((stateName) => stateLabels[stateName]).join(" and ");
+    const agreement = readiness.length ? " Mode $03 decoded count agrees with PID $0101." : "";
+    setMessage("#obd-fault-message", `${summaries}. ECM returned NO DATA for ${unavailableLabels} DTC service.${agreement} Generic emissions only.`);
   } else {
-    setMessage("#obd-fault-message", `${total} DTC observations read at ${formatTimestamp(payload.observed_at)}.`, "success");
+    const agreement = readiness.length ? " Mode $03 decoded count agrees with PID $0101." : "";
+    setMessage("#obd-fault-message", `${summaries}.${agreement} Generic emissions only. Read at ${formatTimestamp(payload.observed_at)}.`, "success");
   }
 }
 
@@ -1542,19 +1565,29 @@ function renderObdVehicleInfo(payload) {
   const first = payload.vins?.[0];
   $("#obd-vin").textContent = first?.vin || "Not reported";
   $("#obd-vin-ecu").textContent = first?.ecu || "—";
-  $("#obd-vehicle-protocol").textContent = payload.protocol || "—";
-  $("#obd-adapter-identity").textContent = payload.adapter_identity || "—";
-  $("#obd-ecu-list").textContent = (payload.responder_ids || []).join(", ") || "—";
-  setMessage("#obd-vehicle-message", payload.vin_mismatch
-    ? "Warning: different ECUs reported different VINs. No VIN was selected silently."
-    : first ? `VIN read from ${first.ecu}.` : "No VIN returned by Mode $09.", payload.vin_mismatch ? "error" : "success");
+  $("#obd-vin-validation").textContent = first ? "Valid 17-character Mode $09 VIN" : "Unavailable";
+  $("#obd-vin-coverage").textContent = payload.vins?.length
+    ? `${payload.vins.length} ECM response${payload.vins.length === 1 ? "" : "s"} contained a valid VIN`
+    : "No valid VIN response";
+  const errorCount = (payload.errors || []).length;
+  if (payload.vin_mismatch) {
+    setMessage("#obd-vehicle-message", "Warning: different ECUs reported different VINs. No VIN was selected silently.", "error");
+  } else if (payload.vin_status === "partial") {
+    setMessage("#obd-vehicle-message", `VIN decoded from ${first?.ecu || "one ECM"}, but ${errorCount} other Mode $09 response errors make this a partial read.`, "error");
+  } else if (payload.vin_status === "error") {
+    setMessage("#obd-vehicle-message", `VIN read failed with ${errorCount} communication/decode errors.`, "error");
+  } else if (payload.vin_status === "no_data") {
+    setMessage("#obd-vehicle-message", "VIN unavailable: the ECM returned no Mode $09 PID $02 data.");
+  } else {
+    setMessage("#obd-vehicle-message", `Valid VIN read from ECM response ${first.ecu}.`, "success");
+  }
 }
 
 async function readObdVehicleInfo() {
   const epoch = state.obd.statusEpoch;
   const requestEpoch = ++state.obd.vehicleEpoch;
   try {
-    setMessage("#obd-vehicle-message", "Reading Mode $09 vehicle information…");
+    setMessage("#obd-vehicle-message", "Reading Mode $09 PID $02 VIN…");
     const payload = await getJson("/api/obd/vehicle-info");
     if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.vehicleEpoch && state.obd.status?.connected) renderObdVehicleInfo(payload);
   } catch (error) {
