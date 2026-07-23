@@ -289,3 +289,21 @@ def test_fixed_independent_wire_vectors_cover_terminal_stuff_ack_and_extended_r1
     )
     assert rejected["frames"] == []
     assert rejected["rejected_candidate_count"] >= 1
+
+
+def test_isolated_recessive_ack_vector_retains_full_eof_tail() -> None:
+    # Fixed wire vector: its final dominant sample is 13 bit-times before the
+    # complete EOF, beyond the former 11-bit candidate tail.
+    vector = "00000100000100000100010001110100000100111000001111111111111"
+    raw = [int(bit) for bit in vector]
+    decoded = decode_can_waveform(*_render([(0, raw)]))
+
+    assert len(decoded["frames"]) == 1
+    assert decoded["frames"][0]["ack_slot"] == "recessive"
+
+    time_us, can_h, can_l = _render([(0, raw)])
+    samples_per_bit = 20
+    # Remove the rendered idle, the three intermission bits, and one EOF bit.
+    trim = (20 + 3 + 1) * samples_per_bit
+    truncated = decode_can_waveform(time_us[:-trim], can_h[:-trim], can_l[:-trim])
+    assert truncated["frames"] == []

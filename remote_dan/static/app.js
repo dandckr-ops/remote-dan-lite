@@ -857,9 +857,9 @@ async function loadCanDecodeSources() {
   }
 }
 
-async function loadCanDecodeResult(runId) {
-  const requestGeneration = canDecodeRequestGate.begin();
-  if (!runId) return;
+async function loadCanDecodeResult(runId, requestGeneration = null) {
+  if (requestGeneration === null) requestGeneration = canDecodeRequestGate.begin();
+  if (!runId) return false;
   try {
     const query = new URLSearchParams();
     const identifier = $("#can-identifier-filter").value.trim();
@@ -867,12 +867,14 @@ async function loadCanDecodeResult(runId) {
     if ($("#can-changing-only").checked) query.set("changing_only", "true");
     const suffix = query.size ? `?${query.toString()}` : "";
     const result = await getJson(`/api/can-decodes/${encodeURIComponent(runId)}${suffix}`);
-    if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
+    if (!canDecodeRequestGate.isCurrent(requestGeneration)) return false;
     state.canDecode = result;
     renderCanDecode();
+    return true;
   } catch (error) {
-    if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
+    if (!canDecodeRequestGate.isCurrent(requestGeneration)) return false;
     setMessage("#can-decode-message", `Could not load CAN decode result: ${error.message}`, "error");
+    return false;
   }
 }
 
@@ -888,6 +890,7 @@ function bindCanDecodeForm() {
       setMessage("#can-decode-message", "Choose an eligible existing capture.", "error");
       return;
     }
+    const requestGeneration = canDecodeRequestGate.begin();
     button.disabled = true;
     setMessage("#can-decode-message", "Decoding immutable source into passive child evidence…");
     try {
@@ -899,17 +902,23 @@ function bindCanDecodeForm() {
           label: $("#can-decode-label").value,
         }),
       });
-      await loadCanDecodeResult(result.run_id);
+      if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
+      const loaded = await loadCanDecodeResult(result.run_id, requestGeneration);
+      if (!loaded || !canDecodeRequestGate.isCurrent(requestGeneration)) return;
       setMessage(
         "#can-decode-message",
         `${result.run_id} completed with ${result.frame_count} validated Classical CAN frames and 0 writes.`,
         "success",
       );
+      if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
       await refreshRuns();
     } catch (error) {
+      if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
       setMessage("#can-decode-message", `CAN decode failed: ${error.message}`, "error");
     } finally {
-      button.disabled = !$("#can-decode-source").value;
+      if (canDecodeRequestGate.isCurrent(requestGeneration)) {
+        button.disabled = !$("#can-decode-source").value;
+      }
     }
   });
   $("#can-identifier-filter").addEventListener("input", () => {

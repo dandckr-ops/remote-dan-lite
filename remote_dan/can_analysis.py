@@ -227,6 +227,7 @@ def _parse_classic_frame(raw_bits: list[int]) -> dict[str, Any] | None:
         "payload_bytes": list(payload),
         "payload_hex": payload.hex().upper(),
         "crc_valid": True,
+        "ack_slot": "dominant" if trailer[1] == 0 else "recessive",
         "complete_raw_bit_count": consumed + 10,
     }
 
@@ -273,7 +274,7 @@ def _frame_evidence(
     for group in groups:
         start = int(group[0])
         last_dominant = int(group[-1])
-        end = min(dominant.size, int(np.ceil(last_dominant + 11.0 * samples_per_bit)))
+        end = min(dominant.size, int(np.ceil(last_dominant + 20.0 * samples_per_bit)))
         occupied_samples += max(0, end - start)
         raw_bit_count = max(1, int(np.ceil((end - start) / samples_per_bit)))
         centers = start + (np.arange(raw_bit_count, dtype=np.float64) + 0.5) * samples_per_bit
@@ -425,7 +426,7 @@ def _decode_can_orientation(
         unsupported_fd_count = 0
         for group in groups:
             start = int(group[0])
-            end = min(dominant.size, int(np.ceil(int(group[-1]) + 11.0 * samples_per_bit)))
+            end = min(dominant.size, int(np.ceil(int(group[-1]) + 20.0 * samples_per_bit)))
             raw_bit_count = max(1, int(np.ceil((end - start) / samples_per_bit)))
             centers = start + (np.arange(raw_bit_count, dtype=np.float64) + 0.5) * samples_per_bit
             centers = centers[centers < dominant.size].astype(np.int64)

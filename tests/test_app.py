@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 from pathlib import Path
 import json
 import shutil
@@ -10,6 +11,7 @@ import pytest
 
 import remote_dan.app as app_module
 from remote_dan.app import create_app
+from remote_dan.can_analysis import aggregate_can_identifiers
 from remote_dan.capture import SimulatorBackend
 from remote_dan.modbus_scan import ModbusSimulatorBackend
 
@@ -153,6 +155,48 @@ def test_api_can_trigger_and_list_a_simulated_capture(tmp_path: Path) -> None:
     artifact = client.get(f"/artifacts/{manifest['run_id']}/summary.json")
     assert artifact.status_code == 200
     assert artifact.json()["backend"] == "simulator"
+
+
+def test_artifact_delivery_requires_complete_authoritative_registration(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    run_id = "authority-route"
+    run_dir = capture_root / run_id
+    run_dir.mkdir(parents=True)
+    path = run_dir / "evidence.json"
+    expected = b'{"exact":true}\n'
+    path.write_bytes(expected)
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    capture_id = app.state.database.create_capture(
+        run_id=run_id,
+        captured_at="2026-07-23T12:00:00+00:00",
+        capture_type="can",
+        label="authority route",
+        backend="test",
+    )
+    registration = {
+        "kind": "evidence",
+        "filename": path.name,
+        "relative_path": f"{run_id}/{path.name}",
+        "media_type": "application/json",
+        "size_bytes": len(expected),
+        "sha256": hashlib.sha256(expected).hexdigest(),
+    }
+    client = TestClient(app)
+
+    assert client.get(f"/artifacts/{run_id}/{path.name}").status_code == 404
+    app.state.database.complete_capture_with_artifacts(capture_id, [registration])
+    response = client.get(f"/artifacts/{run_id}/{path.name}")
+    assert response.status_code == 200
+    assert response.content == expected
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(f"/artifacts/{run_id}/../evidence.json").status_code == 404
+    assert client.get(f"/artifacts/{run_id}/nested/evidence.json").status_code == 404
+
+    path.write_bytes(b'{"altered":true}\n')
+    assert client.get(f"/artifacts/{run_id}/{path.name}").status_code == 404
 
 
 def test_api_persists_capture_and_artifact_lineage_in_sqlite(tmp_path: Path) -> None:
@@ -605,40 +649,43 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
             "identifier_hex": "0x100",
             "extended": False,
             "timestamp_us": float(index),
+            "remote": False,
             "dlc": 1,
+            "payload_bytes": [0],
             "payload_hex": "00",
             "crc_valid": True,
+            "ack_slot": "dominant",
+            "nominal_bitrate_bps": 500_000,
+            "source_sample_start": index * 10,
+            "source_sample_end": index * 10 + 9,
         }
-        for index in range(205)
+        for index in range(204)
     ]
-    frames.append({
+    frames.extend([{
         "identifier": 0x321,
         "identifier_hex": "0x321",
         "extended": False,
-        "timestamp_us": 205.0,
+        "timestamp_us": float(204 + offset),
+        "remote": False,
         "dlc": 1,
-        "payload_hex": "AA",
+        "payload_bytes": [value],
+        "payload_hex": f"{value:02X}",
         "crc_valid": True,
-    })
+        "ack_slot": "recessive",
+        "nominal_bitrate_bps": 500_000,
+        "source_sample_start": (204 + offset) * 10,
+        "source_sample_end": (204 + offset) * 10 + 9,
+    } for offset, value in enumerate((0xAA, 0xBB))])
     (run_dir / "frames.jsonl").write_text(
         "".join(json.dumps(frame) + "\n" for frame in frames),
         encoding="utf-8",
     )
-    identifiers = [
-        {
-            "identifier": 0x100,
-            "identifier_hex": "0x100",
-            "extended": False,
-            "payload_change_count": 0,
-        },
-        {
-            "identifier": 0x321,
-            "identifier_hex": "0x321",
-            "extended": False,
-            "payload_change_count": 1,
-        },
-    ]
-    (run_dir / "summary.json").write_text(json.dumps({"identifiers": identifiers}))
+    identifiers = aggregate_can_identifiers(frames)
+    (run_dir / "summary.json").write_text(json.dumps({
+        "frame_count": len(frames),
+        "identifier_count": len(identifiers),
+        "identifiers": identifiers,
+    }))
     (run_dir / "manifest.json").write_text(json.dumps({
         "run_id": run_id,
         "capture_type": "can_decode",
@@ -680,8 +727,8 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
     assert unfiltered["returned_frame_count"] == 200
     assert unfiltered["total_frame_count"] == 206
     assert unfiltered["frames_truncated"] is True
-    assert [frame["identifier_hex"] for frame in filtered["frames"]] == ["0x321"]
-    assert filtered["total_frame_count"] == filtered["returned_frame_count"] == 1
+    assert [frame["identifier_hex"] for frame in filtered["frames"]] == ["0x321", "0x321"]
+    assert filtered["total_frame_count"] == filtered["returned_frame_count"] == 2
     assert [item["identifier_hex"] for item in changing["identifiers"]] == ["0x321"]
 
 
@@ -806,5 +853,144 @@ def test_can_decode_result_artifact_bounds_fail_closed(
             )
 
     response = client.get(f"/api/can-decodes/{child['run_id']}")
+    assert response.status_code == 404
+    assert "frames" not in response.json()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "summary_identifier_range", "summary_identifier_hex", "summary_frame_count",
+        "summary_timestamps", "summary_payload_changes", "summary_last_payload",
+        "summary_byte_changes", "summary_interval",
+        "frame_identifier_range", "frame_identifier_hex", "frame_remote",
+        "frame_dlc", "frame_payload_byte", "frame_payload_hex", "frame_payload_length",
+        "frame_crc", "frame_ack", "frame_bitrate", "frame_timestamp",
+        "frame_indices", "chronology", "missing_summary_key", "per_key_count",
+        "total_frame_count", "identifier_count",
+    ),
+)
+def test_can_decode_result_strict_schema_and_consistency_fail_closed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    capture_root = tmp_path / "captures"
+    run_id = f"strict-{mutation.replace('_', '-')}"
+    run_dir = capture_root / run_id
+    run_dir.mkdir(parents=True)
+    frames = [
+        {
+            "identifier": 0x321,
+            "identifier_hex": "0x321",
+            "extended": False,
+            "remote": False,
+            "dlc": 1,
+            "payload_bytes": [value],
+            "payload_hex": f"{value:02X}",
+            "crc_valid": True,
+            "ack_slot": "recessive",
+            "nominal_bitrate_bps": 500_000,
+            "timestamp_us": float(index),
+            "source_sample_start": index * 10,
+            "source_sample_end": index * 10 + 9,
+        }
+        for index, value in enumerate((0xAA, 0xBB), start=1)
+    ]
+    identifiers = aggregate_can_identifiers(frames)
+    summary = {
+        "frame_count": 2,
+        "identifier_count": 1,
+        "identifiers": copy.deepcopy(identifiers),
+    }
+    manifest = {
+        "run_id": run_id,
+        "capture_type": "can_decode",
+        "frame_count": 2,
+        "identifier_count": 1,
+    }
+    item = summary["identifiers"][0]
+    frame = frames[0]
+    if mutation == "summary_identifier_range":
+        item["identifier"] = 0x800
+    elif mutation == "summary_identifier_hex":
+        item["identifier_hex"] = "0x321".lower().replace("x", "X")
+    elif mutation == "summary_frame_count":
+        item["frame_count"] = 0
+    elif mutation == "summary_timestamps":
+        item["last_timestamp_us"] = -1
+    elif mutation == "summary_payload_changes":
+        item["payload_change_count"] = 2
+    elif mutation == "summary_last_payload":
+        item["last_payload_hex"] = "bb"
+    elif mutation == "summary_byte_changes":
+        item["byte_change_counts"] = [-1]
+    elif mutation == "summary_interval":
+        item["mean_period_us"] = float("inf")
+    elif mutation == "frame_identifier_range":
+        frame["identifier"] = 0x800
+    elif mutation == "frame_identifier_hex":
+        frame["identifier_hex"] = "0x0321"
+    elif mutation == "frame_remote":
+        frame["remote"] = "false"
+    elif mutation == "frame_dlc":
+        frame["dlc"] = True
+    elif mutation == "frame_payload_byte":
+        frame["payload_bytes"] = [256]
+    elif mutation == "frame_payload_hex":
+        frame["payload_hex"] = "aa"
+    elif mutation == "frame_payload_length":
+        frame["dlc"] = 2
+    elif mutation == "frame_crc":
+        frame["crc_valid"] = False
+    elif mutation == "frame_ack":
+        frame["ack_slot"] = "unknown"
+    elif mutation == "frame_bitrate":
+        frame["nominal_bitrate_bps"] = 123_456
+    elif mutation == "frame_timestamp":
+        frame["timestamp_us"] = -1
+    elif mutation == "frame_indices":
+        frame["source_sample_start"] = True
+    elif mutation == "chronology":
+        frames[1]["timestamp_us"] = 0.0
+    elif mutation == "missing_summary_key":
+        frame["identifier"] = 0x123
+        frame["identifier_hex"] = "0x123"
+    elif mutation == "per_key_count":
+        item["frame_count"] = 3
+    elif mutation == "total_frame_count":
+        manifest["frame_count"] = 3
+    elif mutation == "identifier_count":
+        summary["identifier_count"] = 2
+
+    files = {
+        "frames.jsonl": "".join(json.dumps(value) + "\n" for value in frames),
+        "identifiers.csv": "identifier\n0x321\n",
+        "summary.json": json.dumps(summary),
+        "manifest.json": json.dumps(manifest),
+    }
+    for filename, content in files.items():
+        (run_dir / filename).write_text(content, encoding="utf-8")
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    capture_id = app.state.database.create_capture(
+        run_id=run_id,
+        captured_at="2026-07-23T12:00:00+00:00",
+        capture_type="can_decode",
+        label="strict schema",
+        backend="test",
+    )
+    registrations = []
+    for filename in files:
+        path = run_dir / filename
+        registrations.append({
+            "kind": "can_decode",
+            "filename": filename,
+            "relative_path": f"{run_id}/{filename}",
+            "media_type": "application/json",
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    app.state.database.complete_capture_with_artifacts(capture_id, registrations)
+
+    response = TestClient(app).get(f"/api/can-decodes/{run_id}")
     assert response.status_code == 404
     assert "frames" not in response.json()

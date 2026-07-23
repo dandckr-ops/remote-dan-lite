@@ -4,16 +4,18 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import socket
 import threading
 from typing import Callable, Literal
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from remote_dan import __version__
+from remote_dan.can_analysis import NOMINAL_BITRATES
 from remote_dan.bus_survey import (
     BusSurveyBackend,
     BusSurveyManager,
@@ -75,7 +77,103 @@ from remote_dan.serial_capture import (
     probe_serial_hardware,
 )
 
+
+def _finite_nonnegative(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and float(value) >= 0
+    )
+
+
+def _exact_identifier_hex(identifier: int, extended: bool) -> str:
+    return f"0x{identifier:08X}" if extended else f"0x{identifier:03X}"
+
+
+def _valid_payload_hex(value: object, *, max_bytes: int = 8) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= max_bytes * 2
+        and len(value) % 2 == 0
+        and value == value.upper()
+        and all(character in "0123456789ABCDEF" for character in value)
+    )
+
+
+def _valid_identifier_summary(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    identifier = item.get("identifier")
+    extended = item.get("extended")
+    frame_count = item.get("frame_count")
+    payload_changes = item.get("payload_change_count")
+    first = item.get("first_timestamp_us")
+    last = item.get("last_timestamp_us")
+    byte_changes = item.get("byte_change_counts")
+    if (
+        not isinstance(identifier, int) or isinstance(identifier, bool)
+        or not isinstance(extended, bool)
+        or not 0 <= identifier <= (0x1FFFFFFF if extended else 0x7FF)
+        or item.get("identifier_hex") != _exact_identifier_hex(identifier, extended)
+        or not isinstance(frame_count, int) or isinstance(frame_count, bool) or frame_count <= 0
+        or not _finite_nonnegative(first) or not _finite_nonnegative(last)
+        or float(last) < float(first)
+        or not isinstance(payload_changes, int) or isinstance(payload_changes, bool)
+        or not 0 <= payload_changes <= frame_count - 1
+        or not _valid_payload_hex(item.get("last_payload_hex"))
+        or not isinstance(byte_changes, list) or len(byte_changes) > 8
+        or any(
+            not isinstance(value, int) or isinstance(value, bool)
+            or not 0 <= value <= frame_count - 1
+            for value in byte_changes
+        )
+    ):
+        return False
+    for name in ("observed_duration_us", "mean_period_us", "mean_frequency_hz",
+                 "min_interval_us", "max_interval_us"):
+        value = item.get(name)
+        if value is not None and not _finite_nonnegative(value):
+            return False
+    return True
+
+
+def _valid_can_frame(frame: object) -> bool:
+    if not isinstance(frame, dict):
+        return False
+    identifier = frame.get("identifier")
+    extended = frame.get("extended")
+    dlc = frame.get("dlc")
+    payload = frame.get("payload_bytes")
+    start = frame.get("source_sample_start")
+    end = frame.get("source_sample_end")
+    if (
+        not isinstance(identifier, int) or isinstance(identifier, bool)
+        or not isinstance(extended, bool)
+        or not 0 <= identifier <= (0x1FFFFFFF if extended else 0x7FF)
+        or frame.get("identifier_hex") != _exact_identifier_hex(identifier, extended)
+        or not isinstance(frame.get("remote"), bool)
+        or not isinstance(dlc, int) or isinstance(dlc, bool) or not 0 <= dlc <= 15
+        or not isinstance(payload, list)
+        or any(not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 255
+               for value in payload)
+        or frame.get("payload_hex") != bytes(payload).hex().upper()
+        or not _valid_payload_hex(frame.get("payload_hex"))
+        or (frame.get("remote") and payload != [])
+        or (not frame.get("remote") and len(payload) != min(dlc, 8))
+        or frame.get("crc_valid") is not True
+        or frame.get("ack_slot") not in {"dominant", "recessive"}
+        or frame.get("nominal_bitrate_bps") not in NOMINAL_BITRATES
+        or not _finite_nonnegative(frame.get("timestamp_us"))
+        or not isinstance(start, int) or isinstance(start, bool)
+        or not isinstance(end, int) or isinstance(end, bool)
+        or not 0 <= start < end
+    ):
+        return False
+    return True
+
 STATIC_DIR = Path(__file__).with_name("static")
+MAX_ARTIFACT_DOWNLOAD_BYTES = 64 * 1024 * 1024
 
 
 class CapturePayload(BaseModel):
@@ -374,7 +472,38 @@ def create_app(
     )
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    app.mount("/artifacts", StaticFiles(directory=capture_dir), name="artifacts")
+    @app.get("/artifacts/{run_id}/{filename}", include_in_schema=False)
+    def artifact(run_id: str, filename: str) -> Response:
+        if (
+            not RUN_ID_PATTERN.fullmatch(run_id)
+            or run_id in {".", ".."}
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", filename)
+            or filename in {".", ".."}
+        ):
+            raise HTTPException(status_code=404, detail="artifact not found")
+        record = database.get_capture_by_run_id(run_id)
+        try:
+            if record is None or record.get("status") != "complete":
+                raise ValueError("artifact is not complete")
+            matches = [
+                item for item in record.get("artifacts", [])
+                if item.get("filename") == filename
+            ]
+            if len(matches) != 1:
+                raise ValueError("artifact registration is not unique")
+            media_type = matches[0].get("media_type")
+            if not isinstance(media_type, str) or not media_type:
+                raise ValueError("artifact media type is invalid")
+            data = read_authoritative_artifact(
+                capture_dir, record, filename, max_bytes=MAX_ARTIFACT_DOWNLOAD_BYTES
+            )
+        except (ValueError, OSError):
+            raise HTTPException(status_code=404, detail="artifact not found") from None
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
@@ -469,16 +598,16 @@ def create_app(
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         all_identifiers = summary.get("identifiers", [])
-        if not isinstance(all_identifiers, list) or any(
-            not isinstance(item, dict)
-            or not isinstance(item.get("identifier"), int)
-            or isinstance(item.get("identifier"), bool)
-            or not isinstance(item.get("extended"), bool)
-            or not isinstance(item.get("identifier_hex"), str)
-            or not isinstance(item.get("payload_change_count"), int)
-            or isinstance(item.get("payload_change_count"), bool)
-            for item in all_identifiers
+        if (
+            not isinstance(all_identifiers, list)
+            or any(not _valid_identifier_summary(item) for item in all_identifiers)
         ):
+            raise HTTPException(status_code=404, detail="CAN decode not found")
+        summary_by_key = {
+            (int(item["identifier"]), bool(item["extended"])): item
+            for item in all_identifiers
+        }
+        if len(summary_by_key) != len(all_identifiers):
             raise HTTPException(status_code=404, detail="CAN decode not found")
 
         def identifier_matches(item: dict[str, object]) -> bool:
@@ -497,6 +626,9 @@ def create_app(
         }
         frames: list[dict[str, object]] = []
         total_frames = 0
+        scanned_frames = 0
+        frame_counts: dict[tuple[int, bool], int] = {}
+        previous_order: tuple[float, int, bool] | None = None
         try:
             lines = frames_bytes.splitlines()
             if len(lines) > MAX_SCANNED_FRAME_LINES:
@@ -505,29 +637,17 @@ def create_app(
                 if not line or len(line) > MAX_FRAME_LINE_BYTES:
                     raise ValueError("invalid CAN frame line size")
                 frame = json.loads(line)
-                if (
-                    not isinstance(frame, dict)
-                    or not isinstance(frame.get("identifier"), int)
-                    or isinstance(frame.get("identifier"), bool)
-                    or not 0 <= frame.get("identifier", -1) <= 0x1FFFFFFF
-                    or not isinstance(frame.get("identifier_hex"), str)
-                    or not isinstance(frame.get("extended"), bool)
-                    or not isinstance(frame.get("timestamp_us"), (int, float))
-                    or isinstance(frame.get("timestamp_us"), bool)
-                    or not math.isfinite(float(frame.get("timestamp_us", 0)))
-                    or not isinstance(frame.get("dlc"), int)
-                    or isinstance(frame.get("dlc"), bool)
-                    or not 0 <= frame.get("dlc", -1) <= 15
-                    or not isinstance(frame.get("payload_hex"), str)
-                    or len(frame.get("payload_hex", "")) > 16
-                    or len(frame.get("payload_hex", "")) % 2 != 0
-                    or any(
-                        character not in "0123456789abcdefABCDEF"
-                        for character in frame.get("payload_hex", "")
-                    )
-                    or frame.get("crc_valid") is not True
-                ):
+                if not _valid_can_frame(frame):
                     raise ValueError("malformed CAN frame row")
+                key = (int(frame["identifier"]), bool(frame["extended"]))
+                order = (float(frame["timestamp_us"]), key[0], key[1])
+                if previous_order is not None and order < previous_order:
+                    raise ValueError("CAN frame rows are not chronological")
+                previous_order = order
+                if key not in summary_by_key:
+                    raise ValueError("CAN frame has no identifier summary")
+                scanned_frames += 1
+                frame_counts[key] = frame_counts.get(key, 0) + 1
                 if not identifier_matches(frame):
                     continue
                 if changing_only and (
@@ -538,6 +658,24 @@ def create_app(
                 total_frames += 1
                 if len(frames) < 200:
                     frames.append(frame)
+            if any(
+                frame_counts.get(key, 0) != int(item["frame_count"])
+                for key, item in summary_by_key.items()
+            ):
+                raise ValueError("CAN identifier frame count mismatch")
+            for source in (manifest, summary):
+                if "frame_count" in source and (
+                    not isinstance(source["frame_count"], int)
+                    or isinstance(source["frame_count"], bool)
+                    or source["frame_count"] != scanned_frames
+                ):
+                    raise ValueError("CAN total frame count mismatch")
+                if "identifier_count" in source and (
+                    not isinstance(source["identifier_count"], int)
+                    or isinstance(source["identifier_count"], bool)
+                    or source["identifier_count"] != len(all_identifiers)
+                ):
+                    raise ValueError("CAN identifier count mismatch")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         identifiers = filtered_identifiers[:200]
