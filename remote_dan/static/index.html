@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07100D">
+  <title>Remote Dan Lite · Traceworks Capture Console</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div>
+        <p class="kicker">Signal Foundry / Traceworks</p>
+        <h1>Remote Dan <span>Lite</span></h1>
+        <p class="dek">Trace the fault. Prove the cause.</p>
+      </div>
+      <div class="status-stack" aria-live="polite">
+        <div class="state-chip" id="service-state"><i></i><span>Connecting</span></div>
+        <div class="hostname" id="hostname">capture node</div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="instrument panel">
+        <div class="panel-heading">
+          <div><span class="section-number">01</span><h2>Capture window</h2></div>
+          <p>Bounded acquisition · one operator action</p>
+        </div>
+        <form id="capture-form" class="capture-form">
+          <label class="field wide">
+            <span>Evidence label</span>
+            <input id="label" name="label" maxlength="80" value="bench CAN proof" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Window</span>
+            <select id="preset" name="preset">
+              <option value="short">Short · 40 ms</option>
+              <option value="medium">Medium · 200 ms</option>
+              <option value="long">Long · 500 ms</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Source</span>
+            <select id="mode" name="mode">
+              <option value="auto">Auto</option>
+              <option value="simulator">Simulator</option>
+              <option value="hardware">Pico hardware</option>
+            </select>
+          </label>
+          <button class="capture-button" id="capture-button" type="submit">
+            <span class="button-mark"></span>
+            Arm & capture
+          </button>
+        </form>
+        <div class="message" id="message">Waiting for operator.</div>
+
+        <div class="channel-strip" aria-label="Configured channels">
+          <article><b>A</b><span>VBAT</span><small>battery / supply</small></article>
+          <article class="live"><b>B</b><span>CAN-H</span><small>signal high</small></article>
+          <article class="live alt"><b>C</b><span>CAN-L</span><small>signal low</small></article>
+          <article class="muted"><b>D</b><span>TRIG</span><small>reserved</small></article>
+        </div>
+      </section>
+
+      <aside class="node panel">
+        <div class="panel-heading">
+          <div><span class="section-number">02</span><h2>Capture plane</h2></div>
+        </div>
+        <dl class="node-facts">
+          <div><dt>Service</dt><dd id="service-version">—</dd></div>
+          <div><dt>Default backend</dt><dd id="backend">—</dd></div>
+          <div><dt>PS2000A driver</dt><dd id="driver">—</dd></div>
+          <div><dt>Pico USB</dt><dd id="device">—</dd></div>
+        </dl>
+        <p class="hardware-note" id="hardware-note">Probing capture hardware.</p>
+      </aside>
+
+      <section class="preview panel">
+        <div class="panel-heading">
+          <div><span class="section-number">03</span><h2>Latest evidence</h2></div>
+          <a id="latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a>
+        </div>
+        <div class="scope-grid">
+          <div class="empty-preview" id="empty-preview">
+            <div class="reticle"></div>
+            <strong>No capture loaded</strong>
+            <span>Run a bounded window to populate the evidence plane.</span>
+          </div>
+          <img id="overview" class="overview hidden" alt="Latest capture waveform overview">
+        </div>
+      </section>
+
+      <section class="runs panel">
+        <div class="panel-heading">
+          <div><span class="section-number">04</span><h2>Field Journal</h2></div>
+          <button id="refresh" class="plain-button" type="button">Refresh</button>
+        </div>
+        <div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Remote Dan Lite · synchronized evidence appliance</span>
+      <span>Capture / routing / recovery remain separate failure domains</span>
+    </footer>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[Unit]
+Description=Remote Dan Lite Traceworks capture console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remotedan
+Group=remotedan
+SupplementaryGroups=plugdev dialout video render gpio i2c spi
+WorkingDirectory=/opt/remote-dan-lite
+Environment=PYTHONUNBUFFERED=1
+Environment=REMOTE_DAN_HOST=0.0.0.0
+Environment=REMOTE_DAN_PORT=8776
+Environment=REMOTE_DAN_DATA_DIR=/var/lib/remote-dan-lite/captures
+Environment=REMOTE_DAN_DB_PATH=/var/lib/remote-dan-lite/remote-dan.sqlite3
+Environment=MPLCONFIGDIR=/var/lib/remote-dan-lite/matplotlib
+ExecStart=/opt/remote-dan-lite/.venv/bin/remote-dan-lite
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/remote-dan-lite
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

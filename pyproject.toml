@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "remote-dan-lite"
+version = "0.1.0"
+description = "Traceworks field capture appliance web console"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.34,<1",
+  "numpy>=2.0,<3",
+  "matplotlib>=3.9,<4",
+  "picosdk>=1.1,<2",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<9",
+  "httpx2>=2.7,<3",
+]
+
+[project.scripts]
+remote-dan-lite = "remote_dan.app:main"
+
+[tool.setuptools.packages.find]
+include = ["remote_dan*"]
+
+[tool.setuptools.package-data]
+remote_dan = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

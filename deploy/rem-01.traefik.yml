@@ -1,0 +1,39 @@
+http:
+  routers:
+    remote-dan:
+      rule: "Host(`remote-dan.example.internal`)"
+      entryPoints:
+        - web
+      middlewares:
+        - remote-dan-access
+        - remote-dan-https-redirect
+      service: remote-dan-service
+
+    remote-dan-secure:
+      rule: "Host(`remote-dan.example.internal`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - remote-dan-access
+      tls:
+        certResolver: letsencrypt
+      service: remote-dan-service
+
+  middlewares:
+    remote-dan-https-redirect:
+      redirectScheme:
+        scheme: https
+
+    remote-dan-access:
+      ipAllowList:
+        sourceRange:
+          - "100.64.0.0/10"
+          - "127.0.0.1/32"
+          - "10.0.0.0/24"
+
+  services:
+    remote-dan-service:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: http://10.0.0.50:8776
