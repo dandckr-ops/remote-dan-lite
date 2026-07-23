@@ -31,11 +31,13 @@ def test_plan_allows_a_unique_ecom_device_to_be_forwarded() -> None:
     assert plan.routes == {ecom["key"]: "virtualhere", pico["key"]: "local"}
 
 
-def test_plan_rejects_forwarding_a_protected_local_capture_device() -> None:
+def test_plan_allows_explicit_picoscope_forwarding() -> None:
     pico = device("usb:0ce9:1016:-:1-1", "0ce9", "1016")
 
-    with pytest.raises(RoutingPolicyError, match="protected local capture device"):
-        plan_virtualhere_allowlist([pico], {pico["key"]: "virtualhere"})
+    plan = plan_virtualhere_allowlist([pico], {pico["key"]: "virtualhere"})
+
+    assert plan.allowed_devices == ("0ce9/1016",)
+    assert plan.routes == {pico["key"]: "virtualhere"}
 
 
 def test_plan_allows_explicit_sel_c662_forwarding() -> None:

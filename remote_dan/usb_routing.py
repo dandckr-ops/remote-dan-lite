@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-PROTECTED_LOCAL_DEVICE_IDS = frozenset({"0ce9/1016"})
 VALID_ROUTES = frozenset({"local", "virtualhere"})
 
 
@@ -59,9 +58,6 @@ def plan_virtualhere_allowlist(
 
     routes = {key: selections.get(key, "local") for key in inventory}
     selected_ids = {_device_id(inventory[key]) for key, route in routes.items() if route == "virtualhere"}
-    protected = sorted(selected_ids & PROTECTED_LOCAL_DEVICE_IDS)
-    if protected:
-        raise RoutingPolicyError(f"protected local capture device cannot be forwarded: {protected[0]}")
 
     for device_id in selected_ids:
         matching_keys = [key for key, device in inventory.items() if _device_id(device) == device_id]
