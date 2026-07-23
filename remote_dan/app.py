@@ -68,6 +68,15 @@ from remote_dan.modbus_scan import (
     ModbusScanRequest,
     ModbusSimulatorBackend,
 )
+from remote_dan.obd_evidence import OBDEvidenceManager
+from remote_dan.obd_provider import (
+    OBDInUse,
+    OBDNotConnected,
+    OBDProvider,
+    OBDProviderError,
+    OBDTimeout,
+)
+from remote_dan.obd_service import OBDService
 from remote_dan.serial_analysis import SerialFraming
 from remote_dan.usb_inventory import list_usb_devices
 from remote_dan.routing_socket import RoutingSocketClient, RoutingSocketError
@@ -392,6 +401,46 @@ class UsbRoutingApplyPayload(BaseModel):
     confirmed: bool = False
 
 
+class CustomerPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    company: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=254)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class VehiclePayload(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+    vin: str | None = Field(default=None, min_length=1, max_length=32)
+    make: str | None = Field(default=None, max_length=80)
+    model: str | None = Field(default=None, max_length=80)
+    year: int | None = Field(default=None, ge=1886, le=2200)
+    engine: str | None = Field(default=None, max_length=120)
+    asset_tag: str | None = Field(default=None, max_length=80)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class DiagnosticSessionPayload(BaseModel):
+    customer_id: int = Field(ge=1)
+    vehicle_id: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=120)
+    purpose: str = Field(min_length=1, max_length=240)
+    complaint: str | None = Field(default=None, max_length=2000)
+    location: str | None = Field(default=None, max_length=240)
+    operator_name: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class OBDConnectPayload(BaseModel):
+    mode: Literal["simulator", "hardware"] = "simulator"
+    session_id: int | None = Field(default=None, ge=1)
+
+
+class OBDSnapshotPayload(BaseModel):
+    kind: Literal["live", "faults", "vehicle_info"]
+    label: str = Field(default="OBD snapshot", min_length=1, max_length=80)
+
+
 CapturePayload.model_rebuild()
 
 
@@ -533,6 +582,8 @@ def create_app(
     bus_survey_backend: BusSurveyBackend | None = None,
     usb_inventory_probe: Callable[[], list[dict[str, str | None]]] = list_usb_devices,
     routing_client: RoutingSocketClient | None = None,
+    obd_simulator_provider: OBDProvider | None = None,
+    obd_hardware_provider_factory: Callable[[], OBDProvider] | None = None,
 ) -> FastAPI:
     capture_dir = Path(data_dir)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -562,6 +613,16 @@ def create_app(
         database=database,
     )
     can_decode_manager = CanDecodeManager(capture_dir, database=database)
+    obd_service = OBDService(
+        database=database,
+        simulator_provider=obd_simulator_provider,
+        hardware_provider_factory=obd_hardware_provider_factory,
+    )
+    obd_evidence = OBDEvidenceManager(
+        capture_dir,
+        database=database,
+        service=obd_service,
+    )
 
     app = FastAPI(
         title="Remote Dan Lite",
@@ -580,6 +641,8 @@ def create_app(
     app.state.modbus_simulator = modbus_simulator
     app.state.bus_survey_simulator = bus_survey_simulator
     app.state.can_decode_manager = can_decode_manager
+    app.state.obd_service = obd_service
+    app.state.obd_evidence = obd_evidence
     app.state.pico_lock = pico_lock
     app.state.serial_hardware_manager = (
         SerialCaptureManager(capture_dir, backend=serial_backend, database=database)
@@ -962,6 +1025,127 @@ def create_app(
                 "identifiers_csv": f"/artifacts/{run_id}/identifiers.csv",
             },
         }
+
+    def obd_result(operation: Callable[[], dict[str, object]]) -> dict[str, object]:
+        try:
+            return operation()
+        except OBDNotConnected as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except OBDInUse as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except OBDTimeout as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OBDProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/customers")
+    def customers() -> list[dict[str, object]]:
+        return database.list_customers()
+
+    @app.post("/api/customers", status_code=201)
+    def create_customer(payload: CustomerPayload) -> dict[str, object]:
+        def optional(value: str | None) -> str | None:
+            return value.strip() if value and value.strip() else None
+
+        return {
+            "id": database.create_customer(
+                name=payload.name.strip(),
+                company=optional(payload.company),
+                phone=optional(payload.phone),
+                email=optional(payload.email),
+                notes=optional(payload.notes),
+            )
+        }
+
+    @app.get("/api/vehicles")
+    def vehicles() -> list[dict[str, object]]:
+        return database.list_vehicles()
+
+    @app.post("/api/vehicles", status_code=201)
+    def create_vehicle(payload: VehiclePayload) -> dict[str, object]:
+        try:
+            return {
+                "id": database.create_vehicle(
+                    display_name=payload.display_name.strip(),
+                    vin=payload.vin.strip().upper() if payload.vin else None,
+                    make=payload.make.strip() if payload.make else None,
+                    model=payload.model.strip() if payload.model else None,
+                    year=payload.year,
+                    engine=payload.engine.strip() if payload.engine else None,
+                    asset_tag=payload.asset_tag.strip() if payload.asset_tag else None,
+                    notes=payload.notes.strip() if payload.notes else None,
+                )
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/diagnostic-sessions")
+    def diagnostic_sessions() -> list[dict[str, object]]:
+        return database.list_diagnostic_sessions()
+
+    @app.post("/api/diagnostic-sessions", status_code=201)
+    def create_diagnostic_session(payload: DiagnosticSessionPayload) -> dict[str, int]:
+        try:
+            return database.create_diagnostic_session(
+                customer_id=payload.customer_id,
+                vehicle_id=payload.vehicle_id,
+                title=payload.title.strip(),
+                purpose=payload.purpose.strip(),
+                complaint=payload.complaint.strip() if payload.complaint else None,
+                location=payload.location.strip() if payload.location else None,
+                operator_name=(
+                    payload.operator_name.strip() if payload.operator_name else None
+                ),
+                notes=payload.notes.strip() if payload.notes else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/diagnostic-sessions/{session_id}/obd-snapshots")
+    def obd_session_snapshots(session_id: int) -> list[dict[str, object]]:
+        return database.list_obd_snapshots(session_id)
+
+    @app.get("/api/obd/status")
+    def obd_status() -> dict[str, object]:
+        return obd_service.status()
+
+    @app.post("/api/obd/connect", status_code=201)
+    def obd_connect(payload: OBDConnectPayload) -> dict[str, object]:
+        return obd_result(
+            lambda: obd_service.connect(mode=payload.mode, session_id=payload.session_id)
+        )
+
+    @app.post("/api/obd/disconnect")
+    def obd_disconnect() -> dict[str, object]:
+        return obd_result(obd_service.disconnect)
+
+    @app.get("/api/obd/live")
+    def obd_live() -> dict[str, object]:
+        return obd_result(obd_service.read_live)
+
+    @app.get("/api/obd/faults")
+    def obd_faults() -> dict[str, object]:
+        return obd_result(obd_service.read_faults)
+
+    @app.get("/api/obd/vehicle-info")
+    def obd_vehicle_info() -> dict[str, object]:
+        return obd_result(obd_service.read_vehicle_info)
+
+    @app.post("/api/obd/snapshots", status_code=201)
+    def create_obd_snapshot(payload: OBDSnapshotPayload) -> dict[str, object]:
+        return obd_result(
+            lambda: obd_evidence.save(kind=payload.kind, label=payload.label.strip())
+        )
+
+    @app.post("/api/obd/faults/clear/prepare")
+    def prepare_obd_clear() -> dict[str, object]:
+        return obd_result(lambda: obd_service.clear_faults())  # type: ignore[func-returns-value]
 
     @app.post("/api/bus-surveys", status_code=201)
     def create_bus_survey(payload: BusSurveyPayload) -> dict[str, object]:

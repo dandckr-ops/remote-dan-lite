@@ -1209,3 +1209,129 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
     response = TestClient(app).get(f"/api/can-decodes/{run_id}")
     assert response.status_code == 404
     assert "frames" not in response.json()
+
+
+def test_api_creates_and_lists_customer_vehicle_and_diagnostic_session(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+    )
+    client = TestClient(app)
+
+    customer = client.post(
+        "/api/customers",
+        json={
+            "name": "Example Customer",
+            "company": "Example Fleet",
+            "phone": "555-0100",
+            "email": "service@example.invalid",
+        },
+    )
+    vehicle = client.post(
+        "/api/vehicles",
+        json={
+            "display_name": "2009 Subaru Forester",
+            "vin": "JF2SH63689G000002",
+            "make": "Subaru",
+            "model": "Forester",
+            "year": 2009,
+        },
+    )
+    session = client.post(
+        "/api/diagnostic-sessions",
+        json={
+            "customer_id": customer.json()["id"],
+            "vehicle_id": vehicle.json()["id"],
+            "title": "OBD scan",
+            "purpose": "Read emissions data",
+            "complaint": "MIL history",
+            "operator_name": "Daniel",
+        },
+    )
+
+    assert customer.status_code == 201
+    assert vehicle.status_code == 201
+    assert session.status_code == 201
+    assert client.get("/api/customers").json()[0]["name"] == "Example Customer"
+    assert client.get("/api/vehicles").json()[0]["vin"] == "JF2SH63689G000002"
+    listed_sessions = client.get("/api/diagnostic-sessions").json()
+    assert listed_sessions[0]["session_id"] == session.json()["session_id"]
+    assert listed_sessions[0]["customer"]["name"] == "Example Customer"
+    assert listed_sessions[0]["vehicle"]["display_name"] == "2009 Subaru Forester"
+
+
+def test_api_obd_simulator_reads_and_persists_session_artifact(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+    )
+    client = TestClient(app)
+    customer_id = client.post("/api/customers", json={"name": "Bench"}).json()["id"]
+    vehicle_id = client.post(
+        "/api/vehicles", json={"display_name": "Simulator Vehicle"}
+    ).json()["id"]
+    session_id = client.post(
+        "/api/diagnostic-sessions",
+        json={
+            "customer_id": customer_id,
+            "vehicle_id": vehicle_id,
+            "title": "OBD simulator",
+            "purpose": "API proof",
+        },
+    ).json()["session_id"]
+
+    assert client.get("/api/obd/status").json()["connected"] is False
+    connected = client.post(
+        "/api/obd/connect",
+        json={"mode": "simulator", "session_id": session_id},
+    )
+    live = client.get("/api/obd/live")
+    faults = client.get("/api/obd/faults")
+    vehicle = client.get("/api/obd/vehicle-info")
+    saved = client.post(
+        "/api/obd/snapshots",
+        json={"kind": "faults", "label": "Baseline emissions scan"},
+    )
+
+    assert connected.status_code == 201
+    assert connected.json()["provider"] == "obd-simulator"
+    assert live.status_code == 200
+    assert any(item["pid"] == "0C" for item in live.json()["values"])
+    assert [item["code"] for item in faults.json()["stored"]] == [
+        "P0102", "P0113", "P0028",
+    ]
+    assert vehicle.json()["vins"][0]["vin"] == "1M8GDM9AXKP042788"
+    assert saved.status_code == 201
+    manifest = saved.json()
+    assert manifest["capture_type"] == "obd_scan"
+    assert manifest["profile"] == "obd"
+    assert set(manifest["artifacts"]) == {"manifest.json", "obd-snapshot.json"}
+    evidence = client.get(
+        f"/api/evidence/captures/{manifest['capture_id']}"
+    ).json()
+    assert len(evidence["artifacts"]) == 2
+    snapshots = client.get(
+        f"/api/diagnostic-sessions/{session_id}/obd-snapshots"
+    ).json()
+    assert snapshots[0]["capture_id"] == manifest["capture_id"]
+    assert client.get(
+        f"/artifacts/{manifest['run_id']}/obd-snapshot.json"
+    ).status_code == 200
+    assert client.post("/api/obd/disconnect").json()["connected"] is False
+
+
+def test_api_obd_clear_prepare_fails_closed_without_authenticated_operator(
+    tmp_path: Path,
+) -> None:
+    app = create_app(data_dir=tmp_path / "captures", db_path=tmp_path / "db.sqlite3")
+    client = TestClient(app)
+    client.post("/api/obd/connect", json={"mode": "simulator"})
+
+    response = client.post("/api/obd/faults/clear/prepare")
+
+    assert response.status_code == 403
+    assert "authenticated operator" in response.json()["detail"]

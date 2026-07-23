@@ -474,6 +474,69 @@ class EvidenceDatabase:
                 "session_id": int(session_cursor.lastrowid),
             }
 
+    def list_diagnostic_sessions(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    s.id AS session_id, s.started_at, s.ended_at,
+                    s.status AS session_status, s.purpose, s.operator_name,
+                    s.notes AS session_notes, dc.id AS case_id,
+                    dc.title AS case_title, dc.complaint, dc.location,
+                    c.id AS customer_id, c.name AS customer_name,
+                    c.company AS customer_company, c.phone AS customer_phone,
+                    c.email AS customer_email, a.id AS vehicle_id,
+                    a.display_name AS vehicle_display_name, a.vin_serial,
+                    a.make, a.model, a.year, a.engine, a.asset_tag
+                FROM sessions s
+                JOIN diagnostic_cases dc ON dc.id = s.case_id
+                LEFT JOIN customers c ON c.id = dc.customer_id
+                LEFT JOIN assets a ON a.id = dc.asset_id
+                ORDER BY s.started_at DESC, s.id DESC
+                """
+            ).fetchall()
+            return [
+                {
+                    "session_id": row["session_id"],
+                    "case_id": row["case_id"],
+                    "started_at": row["started_at"],
+                    "ended_at": row["ended_at"],
+                    "status": row["session_status"],
+                    "purpose": row["purpose"],
+                    "operator_name": row["operator_name"],
+                    "notes": row["session_notes"],
+                    "case": {
+                        "title": row["case_title"],
+                        "complaint": row["complaint"],
+                        "location": row["location"],
+                    },
+                    "customer": (
+                        {
+                            "id": row["customer_id"],
+                            "name": row["customer_name"],
+                            "company": row["customer_company"],
+                            "phone": row["customer_phone"],
+                            "email": row["customer_email"],
+                        }
+                        if row["customer_id"] is not None else None
+                    ),
+                    "vehicle": (
+                        {
+                            "id": row["vehicle_id"],
+                            "display_name": row["vehicle_display_name"],
+                            "vin": row["vin_serial"],
+                            "make": row["make"],
+                            "model": row["model"],
+                            "year": row["year"],
+                            "engine": row["engine"],
+                            "asset_tag": row["asset_tag"],
+                        }
+                        if row["vehicle_id"] is not None else None
+                    ),
+                }
+                for row in rows
+            ]
+
     def create_obd_connection(
         self,
         *,
