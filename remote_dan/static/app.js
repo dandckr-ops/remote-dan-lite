@@ -13,6 +13,7 @@ const state = {
     inventoryRevision: null,
     routes: {},
   },
+  canDecode: null,
 };
 
 const tabs = $$('[role="tab"][data-tab]');
@@ -735,6 +736,182 @@ function showCanAnalysis(run) {
   $("#can-analysis-detail").textContent = details.join(" · ");
 }
 
+function isCanDecodeRun(run) {
+  return run?.capture_type === "can_decode";
+}
+
+function tableCell(text) {
+  const cell = document.createElement("td");
+  cell.textContent = String(text);
+  return cell;
+}
+
+function renderCanDecode() {
+  const result = state.canDecode;
+  if (!result) return;
+  const filter = $("#can-identifier-filter").value.trim().toLowerCase();
+  const changingOnly = $("#can-changing-only").checked;
+  const identifiers = (result.identifiers || []).filter((item) => {
+    const matchesText = !filter || String(item.identifier_hex || "").toLowerCase().includes(filter);
+    return matchesText && (!changingOnly || Number(item.payload_change_count) > 0);
+  });
+  const changingIdentifiers = new Set(
+    (result.identifiers || [])
+      .filter((item) => Number(item.payload_change_count) > 0)
+      .map((item) => Number(item.identifier)),
+  );
+  const frames = (result.frames || []).filter((frame) => {
+    const matchesText = !filter || String(frame.identifier_hex || "").toLowerCase().includes(filter);
+    return matchesText && (!changingOnly || changingIdentifiers.has(Number(frame.identifier)));
+  });
+
+  const identifierRows = identifiers.map((item) => {
+    const row = document.createElement("tr");
+    const frequency = Number(item.mean_frequency_hz);
+    const period = Number(item.mean_period_us);
+    const cadence = Number.isFinite(frequency) && Number.isFinite(period)
+      ? `${formatMetric(period, 1)} µs · ${formatMetric(frequency, 1)} Hz`
+      : "One frame · cadence unavailable";
+    row.append(
+      tableCell(item.identifier_hex || "—"),
+      tableCell(item.extended ? "Extended" : "Standard"),
+      tableCell(Number(item.frame_count || 0).toLocaleString()),
+      tableCell(cadence),
+      tableCell(Number(item.payload_change_count || 0).toLocaleString()),
+      tableCell(item.last_payload_hex || "(remote / empty)"),
+    );
+    return row;
+  });
+  if (!identifierRows.length) {
+    const row = document.createElement("tr");
+    const cell = tableCell("No identifiers match the current bounded filter.");
+    cell.colSpan = 6;
+    row.append(cell);
+    identifierRows.push(row);
+  }
+  $("#can-identifier-rows").replaceChildren(...identifierRows);
+
+  const frameRows = frames.map((frame) => {
+    const row = document.createElement("tr");
+    row.append(
+      tableCell(`${formatMetric(frame.timestamp_us, 1)} µs`),
+      tableCell(frame.identifier_hex || "—"),
+      tableCell(frame.extended ? "Extended" : "Standard"),
+      tableCell(frame.dlc ?? "—"),
+      tableCell(frame.payload_hex || "(remote / empty)"),
+      tableCell(frame.crc_valid ? "Valid" : "Excluded"),
+    );
+    return row;
+  });
+  if (!frameRows.length) {
+    const row = document.createElement("tr");
+    const cell = tableCell("No validated frames match the current bounded filter.");
+    cell.colSpan = 6;
+    row.append(cell);
+    frameRows.push(row);
+  }
+  $("#can-frame-rows").replaceChildren(...frameRows);
+
+  const frameTruncation = result.frames_truncated ? " Frames are truncated; full JSONL is retained." : "";
+  const identifierTruncation = result.identifiers_truncated ? " Identifiers are truncated; full CSV is retained." : "";
+  $("#can-decode-row-truth").textContent = `Showing ${identifiers.length} filtered identifier rows and ${frames.length} filtered frame rows. API returned ${result.returned_identifier_count} of ${result.total_identifier_count} identifiers (limit ${result.identifier_limit}) and ${result.returned_frame_count} of ${result.total_frame_count} frames (limit ${result.frame_limit}).${identifierTruncation}${frameTruncation}`;
+
+  const frameArtifact = $("#can-frames-artifact");
+  const identifierArtifact = $("#can-identifiers-artifact");
+  frameArtifact.href = result.artifact_urls.frames_jsonl;
+  identifierArtifact.href = result.artifact_urls.identifiers_csv;
+  frameArtifact.classList.remove("hidden");
+  identifierArtifact.classList.remove("hidden");
+  const status = $("#can-decode-status");
+  status.textContent = `${result.total_frame_count} valid · ${result.can_polarity || "expected"}`;
+  status.className = "status-label live";
+}
+
+async function loadCanDecodeSources() {
+  const select = $("#can-decode-source");
+  try {
+    const payload = await getJson("/api/can-decode-sources");
+    const sources = payload.sources || [];
+    const options = sources.map((source) => {
+      const option = document.createElement("option");
+      option.value = source.run_id;
+      option.textContent = `${source.label || source.run_id} · ${formatTimestamp(source.captured_at)} · ${String(source.capture_type || "CAN").replace("_", " ")}`;
+      return option;
+    });
+    if (!options.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No eligible existing CAN capture";
+      options.push(option);
+    }
+    select.replaceChildren(...options);
+    $("#can-decode-button").disabled = !sources.length;
+  } catch (error) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Source list unavailable";
+    select.replaceChildren(option);
+    $("#can-decode-button").disabled = true;
+    setMessage("#can-decode-message", `Could not load CAN decode sources: ${error.message}`, "error");
+  }
+}
+
+async function loadCanDecodeResult(runId) {
+  if (!runId) return;
+  try {
+    const query = new URLSearchParams();
+    const identifier = $("#can-identifier-filter").value.trim();
+    if (identifier) query.set("identifier", identifier);
+    if ($("#can-changing-only").checked) query.set("changing_only", "true");
+    const suffix = query.size ? `?${query.toString()}` : "";
+    state.canDecode = await getJson(`/api/can-decodes/${encodeURIComponent(runId)}${suffix}`);
+    renderCanDecode();
+  } catch (error) {
+    setMessage("#can-decode-message", `Could not load CAN decode result: ${error.message}`, "error");
+  }
+}
+
+function bindCanDecodeForm() {
+  $("#can-decode-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("#can-decode-button");
+    const sourceRunId = $("#can-decode-source").value;
+    if (!sourceRunId) {
+      setMessage("#can-decode-message", "Choose an eligible existing capture.", "error");
+      return;
+    }
+    button.disabled = true;
+    setMessage("#can-decode-message", "Decoding immutable source into passive child evidence…");
+    try {
+      const result = await getJson("/api/can-decodes", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          source_run_id: sourceRunId,
+          label: $("#can-decode-label").value,
+        }),
+      });
+      await loadCanDecodeResult(result.run_id);
+      setMessage(
+        "#can-decode-message",
+        `${result.run_id} completed with ${result.frame_count} validated Classical CAN frames and 0 writes.`,
+        "success",
+      );
+      await refreshRuns();
+    } catch (error) {
+      setMessage("#can-decode-message", `CAN decode failed: ${error.message}`, "error");
+    } finally {
+      button.disabled = !$("#can-decode-source").value;
+    }
+  });
+  $("#can-identifier-filter").addEventListener("input", () => {
+    if (state.canDecode?.run_id) loadCanDecodeResult(state.canDecode.run_id);
+  });
+  $("#can-changing-only").addEventListener("change", () => {
+    if (state.canDecode?.run_id) loadCanDecodeResult(state.canDecode.run_id);
+  });
+}
+
 function showNetwork(run) {
   if (!run) return;
   const previewChannels = run.summary?.preview_channels || [];
@@ -818,7 +995,13 @@ function renderRuns(runs) {
     window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${sampleUnit}`;
     const links = document.createElement("div");
     links.className = "artifact-links";
-    if (isBusSurveyRun(run)) {
+    if (isCanDecodeRun(run)) {
+      links.append(
+        artifactLink(run, "frames.jsonl", "FRAMES"),
+        artifactLink(run, "identifiers.csv", "IDENTIFIERS"),
+        artifactLink(run, "summary.json", "JSON"),
+      );
+    } else if (isBusSurveyRun(run)) {
       links.append(
         artifactLink(run, "fast.csv", "FAST"),
         artifactLink(run, "context.csv", "CONTEXT"),
@@ -893,6 +1076,11 @@ async function refreshRuns() {
     showSerial(runs.find(isSerialRun));
     showNetwork(runs.find(isNetworkRun));
     showScope(runs.find(isScopeRun));
+    await loadCanDecodeSources();
+    const latestDecode = runs.find(isCanDecodeRun);
+    if (latestDecode && state.canDecode?.run_id !== latestDecode.run_id) {
+      await loadCanDecodeResult(latestDecode.run_id);
+    }
   } catch (error) {
     setMessage("#scope-message", `Could not load evidence list: ${error.message}`, "error");
     setMessage("#serial-message", `Could not load evidence list: ${error.message}`, "error");
@@ -1039,6 +1227,7 @@ bindScopeCaptureForm();
 bindBusSurveyForm();
 bindSerialCaptureForm();
 bindCanCaptureForm();
+bindCanDecodeForm();
 bindModbusScanForm();
 $("#usb-routing-apply").addEventListener("click", applyUsbRouting);
 $("#refresh").addEventListener("click", refreshRuns);

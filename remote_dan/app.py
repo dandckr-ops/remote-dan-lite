@@ -20,6 +20,13 @@ from remote_dan.bus_survey import (
     BusSurveySimulatorBackend,
     PicoBusSurveyBackend,
 )
+from remote_dan.can_decode import (
+    RUN_ID_PATTERN,
+    CanDecodeManager,
+    CanDecodeRequest,
+    CanDecodeSourceNotFound,
+    eligible_bus_survey_classification,
+)
 from remote_dan.capture import (
     ATTENUATIONS,
     COUPLINGS,
@@ -118,6 +125,11 @@ class BusSurveyPayload(BaseModel):
     passive_only_confirmed: bool = False
 
 
+class CanDecodePayload(BaseModel):
+    source_run_id: str = Field(min_length=1, max_length=128, pattern=r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+    label: str = Field(default="CAN decode", min_length=1, max_length=80)
+
+
 class ModbusScanPayload(BaseModel):
     label: str = Field(default="Modbus network discovery", min_length=1, max_length=80)
     interface: str = Field(min_length=1, max_length=32)
@@ -187,6 +199,37 @@ def _list_manifests(data_dir: Path) -> list[dict[str, object]]:
     return manifests
 
 
+def _list_can_decode_sources(data_dir: Path) -> list[dict[str, object]]:
+    sources: list[dict[str, object]] = []
+    for manifest in _list_manifests(data_dir):
+        capture_type = manifest.get("capture_type")
+        summary = manifest.get("summary") if isinstance(manifest.get("summary"), dict) else {}
+        classification = summary.get("classification") if isinstance(summary, dict) else {}
+        is_survey_can = (
+            capture_type == "bus_survey"
+            and eligible_bus_survey_classification(classification)
+        )
+        is_network = capture_type == "can" or (
+            capture_type == "scope" and manifest.get("profile") == "network"
+        )
+        if not (is_survey_can or is_network):
+            continue
+        run_id = manifest.get("run_id")
+        if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id):
+            continue
+        sources.append({
+            "run_id": run_id,
+            "capture_id": manifest.get("capture_id"),
+            "captured_at": manifest.get("captured_at"),
+            "label": manifest.get("label"),
+            "capture_type": capture_type,
+            "source_artifact": "fast.csv" if is_survey_can else "capture.csv",
+        })
+        if len(sources) == 200:
+            break
+    return sources
+
+
 def create_app(
     data_dir: Path | str = "/var/lib/remote-dan-lite/captures",
     db_path: Path | str | None = None,
@@ -227,6 +270,7 @@ def create_app(
         backend=BusSurveySimulatorBackend(),
         database=database,
     )
+    can_decode_manager = CanDecodeManager(capture_dir, database=database)
 
     app = FastAPI(
         title="Remote Dan Lite",
@@ -244,6 +288,7 @@ def create_app(
     app.state.serial_simulator = serial_simulator
     app.state.modbus_simulator = modbus_simulator
     app.state.bus_survey_simulator = bus_survey_simulator
+    app.state.can_decode_manager = can_decode_manager
     app.state.pico_lock = pico_lock
     app.state.serial_hardware_manager = (
         SerialCaptureManager(capture_dir, backend=serial_backend, database=database)
@@ -306,6 +351,128 @@ def create_app(
     @app.get("/api/captures")
     def captures() -> list[dict[str, object]]:
         return _list_manifests(capture_dir)
+
+    @app.get("/api/can-decode-sources")
+    def can_decode_sources() -> dict[str, object]:
+        sources = _list_can_decode_sources(capture_dir)
+        return {
+            "sources": sources,
+            "returned_count": len(sources),
+            "source_limit": 200,
+            "writes_enabled": False,
+        }
+
+    @app.post("/api/can-decodes", status_code=201)
+    def create_can_decode(payload: CanDecodePayload) -> dict[str, object]:
+        try:
+            return app.state.can_decode_manager.run(CanDecodeRequest(
+                source_run_id=payload.source_run_id,
+                label=payload.label,
+            ))
+        except CanDecodeSourceNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/can-decodes/{run_id}")
+    def can_decode_result(
+        run_id: str,
+        identifier: str = "",
+        changing_only: bool = False,
+    ) -> dict[str, object]:
+        if not RUN_ID_PATTERN.fullmatch(run_id) or run_id in {".", ".."}:
+            raise HTTPException(status_code=404, detail="CAN decode not found")
+        identifier_filter = identifier.strip().lower()
+        if len(identifier_filter) > 16 or any(
+            character not in "0123456789abcdefx" for character in identifier_filter
+        ):
+            raise HTTPException(status_code=422, detail="invalid CAN identifier filter")
+        identifier_filter = identifier_filter.removeprefix("0x")
+        run_dir = capture_dir / run_id
+        manifest_path = run_dir / "manifest.json"
+        summary_path = run_dir / "summary.json"
+        frames_path = run_dir / "frames.jsonl"
+        try:
+            if (
+                run_dir.is_symlink()
+                or manifest_path.is_symlink()
+                or summary_path.is_symlink()
+                or frames_path.is_symlink()
+                or run_dir.resolve().parent != capture_dir.resolve()
+            ):
+                raise OSError("unconfined run")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            if manifest.get("capture_type") != "can_decode":
+                raise OSError("not a CAN decode")
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raise HTTPException(status_code=404, detail="CAN decode not found") from None
+        all_identifiers = summary.get("identifiers", [])
+        if not isinstance(all_identifiers, list):
+            all_identifiers = []
+
+        def identifier_matches(item: dict[str, object]) -> bool:
+            normalized = str(item.get("identifier_hex", "")).lower().removeprefix("0x")
+            return not identifier_filter or identifier_filter in normalized
+
+        filtered_identifiers = [
+            item for item in all_identifiers
+            if isinstance(item, dict)
+            and identifier_matches(item)
+            and (not changing_only or int(item.get("payload_change_count", 0)) > 0)
+        ]
+        changing_keys = {
+            (int(item["identifier"]), bool(item.get("extended")))
+            for item in filtered_identifiers
+        }
+        frames: list[dict[str, object]] = []
+        total_frames = 0
+        try:
+            with frames_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    frame = json.loads(line)
+                    if not isinstance(frame, dict) or not identifier_matches(frame):
+                        continue
+                    if changing_only and (
+                        int(frame.get("identifier", -1)),
+                        bool(frame.get("extended")),
+                    ) not in changing_keys:
+                        continue
+                    total_frames += 1
+                    if len(frames) < 200:
+                        frames.append(frame)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raise HTTPException(status_code=404, detail="CAN decode not found") from None
+        identifiers = filtered_identifiers[:200]
+        total_identifiers = len(filtered_identifiers)
+        return {
+            "run_id": run_id,
+            "capture_id": manifest.get("capture_id"),
+            "source_run_id": manifest.get("source_run_id"),
+            "can_polarity": manifest.get("can_polarity"),
+            "nominal_bitrate_bps": manifest.get("nominal_bitrate_bps"),
+            "writes_performed": 0,
+            "identifier_filter": identifier,
+            "changing_only": changing_only,
+            "frame_limit": 200,
+            "total_frame_count": total_frames,
+            "returned_frame_count": len(frames),
+            "frames_truncated": total_frames > len(frames),
+            "frames": frames,
+            "identifier_limit": 200,
+            "total_identifier_count": total_identifiers,
+            "returned_identifier_count": len(identifiers),
+            "identifiers_truncated": total_identifiers > len(identifiers),
+            "identifiers": identifiers,
+            "warnings": manifest.get("warnings", []),
+            "limitations": manifest.get("limitations", []),
+            "artifact_urls": {
+                "frames_jsonl": f"/artifacts/{run_id}/frames.jsonl",
+                "identifiers_csv": f"/artifacts/{run_id}/identifiers.csv",
+            },
+        }
 
     @app.post("/api/bus-surveys", status_code=201)
     def create_bus_survey(payload: BusSurveyPayload) -> dict[str, object]:

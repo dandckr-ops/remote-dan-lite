@@ -311,6 +311,15 @@ class EvidenceDatabase:
             if cursor.rowcount != 1:
                 raise ValueError("capture does not exist")
 
+    def set_capture_metadata(self, capture_id: int, metadata: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE captures SET metadata_json = ? WHERE id = ?",
+                (json.dumps(metadata, sort_keys=True), capture_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("capture does not exist")
+
     def delete_capture(self, capture_id: int) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM captures WHERE id = ?", (capture_id,))
@@ -430,3 +439,11 @@ class EvidenceDatabase:
                     "notes": row["asset_notes"],
                 }
             return record
+
+    def get_capture_by_run_id(self, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM captures WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return self.get_capture(int(row["id"])) if row is not None else None

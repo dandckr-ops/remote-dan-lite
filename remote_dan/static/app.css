@@ -88,6 +88,24 @@ h1 span { color: var(--muted); font-weight: 400; }
 .workspace { margin-top: 18px; }
 .tab-panel[hidden] { display: none; }
 .panel { border: 1px solid var(--rule); background: linear-gradient(180deg, rgba(12, 25, 20, .97), rgba(7, 16, 13, .98)); box-shadow: 0 18px 60px rgba(0, 0, 0, .22); }
+.can-decode-panel, .can-decode-results { margin-top: 18px; }
+.can-decode-form, .can-decode-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  padding: 18px;
+}
+.can-decode-filters { grid-template-columns: minmax(0, 1fr) auto; }
+.can-changing-filter { display: flex; align-items: center; gap: 9px; min-height: 42px; }
+.can-decode-limitation, .can-decode-row-truth { margin: 0; padding: 0 18px 18px; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.can-decode-artifacts { flex-wrap: wrap; justify-content: flex-end; }
+.can-decode-table-scroll { max-width: 100%; overflow-x: auto; }
+.can-decode-table { width: 100%; min-width: 760px; border-collapse: collapse; }
+.can-decode-table caption { padding: 10px 18px; color: var(--muted); text-align: left; font-size: 10px; }
+.can-decode-table th, .can-decode-table td { padding: 10px 14px; border-top: 1px solid var(--rule); text-align: left; font-size: 10px; white-space: nowrap; }
+.can-decode-table th { color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.can-frame-heading { border-top: 1px solid var(--rule); }
 .panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 64px; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
 .panel-heading.compact { min-height: 58px; }
 .panel-heading > div { display: flex; align-items: center; gap: 12px; }
@@ -332,6 +350,10 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
 }
 
 @media (max-width: 620px) {
+  .can-decode-form, .can-decode-filters { grid-template-columns: minmax(0, 1fr); }
+  .can-decode-form .capture-button { width: 100%; }
+  .can-decode-results .panel-heading { align-items: flex-start; flex-direction: column; }
+  .can-decode-artifacts { justify-content: flex-start; }
   .shell { width: min(100% - 22px, 1520px); padding-top: 24px; }
   .masthead { flex-direction: column; align-items: flex-start; }
   .status-stack { text-align: left; }

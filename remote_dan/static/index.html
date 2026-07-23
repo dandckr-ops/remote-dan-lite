@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=bus-discovery-1">
+  <link rel="stylesheet" href="/static/app.css?v=can-decode-v1">
 </head>
 <body>
   <div class="shell">
@@ -335,6 +335,45 @@
             <p id="can-analysis-detail">Run the Analyze window. Protocol names require decoded identifier fingerprints; electrical shape or bitrate alone is not enough to call J1939.</p>
           </div>
         </section>
+        <section class="panel can-decode-panel" aria-labelledby="can-decode-heading">
+          <div class="panel-heading">
+            <div><span class="section-number">04C</span><h2 id="can-decode-heading">Decode existing capture</h2></div>
+            <span class="status-label planned" id="can-decode-status">No decode loaded</span>
+          </div>
+          <form id="can-decode-form" class="can-decode-form">
+            <label class="field"><span>Eligible CAN or Bus Survey source</span><select id="can-decode-source" required><option value="">Loading existing captures…</option></select></label>
+            <label class="field"><span>Child evidence label</span><input id="can-decode-label" maxlength="80" value="CAN decode" autocomplete="off" required></label>
+            <button class="capture-button" id="can-decode-button" type="submit"><span class="button-mark"></span>Decode existing capture</button>
+          </form>
+          <div class="message" id="can-decode-message" aria-live="polite">Select an existing immutable capture. Decoding creates separate child evidence and performs 0 bus writes.</div>
+          <p class="can-decode-limitation">This is generic Classical CAN decoding only; no DBC or OEM signal meaning is inferred. CAN FD payloads, ISO-TP, UDS, VINs, and PIDs are not decoded.</p>
+        </section>
+        <section class="panel can-decode-results" aria-labelledby="can-identifier-heading">
+          <div class="panel-heading">
+            <div><span class="section-number">04D</span><h2 id="can-identifier-heading">Identifier inventory</h2></div>
+            <div class="can-decode-artifacts"><a id="can-frames-artifact" class="text-link hidden" href="#">Frame JSONL</a><a id="can-identifiers-artifact" class="text-link hidden" href="#">Identifier CSV</a></div>
+          </div>
+          <div class="can-decode-filters">
+            <label class="field"><span>Filter by identifier</span><input id="can-identifier-filter" type="search" placeholder="0x123" autocomplete="off"></label>
+            <label class="can-changing-filter"><input id="can-changing-only" type="checkbox"><span>Changing payloads only</span></label>
+          </div>
+          <p id="can-decode-row-truth" class="can-decode-row-truth" aria-live="polite">No bounded decode result loaded.</p>
+          <div class="can-decode-table-scroll">
+            <table id="can-identifier-table" class="can-decode-table">
+              <caption>Bounded identifier inventory from validated Classical CAN frames</caption>
+              <thead><tr><th scope="col">ID</th><th scope="col">Format</th><th scope="col">Count</th><th scope="col">Cadence / frequency</th><th scope="col">Payload changes</th><th scope="col">Last payload</th></tr></thead>
+              <tbody id="can-identifier-rows"><tr><td colspan="6">No identifiers loaded.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="panel-heading can-frame-heading"><div><span class="section-number">04E</span><h2>Validated frames</h2></div></div>
+          <div class="can-decode-table-scroll">
+            <table id="can-frame-table" class="can-decode-table">
+              <caption>Bounded CRC-valid Classical CAN frame rows</caption>
+              <thead><tr><th scope="col">Relative timestamp</th><th scope="col">ID</th><th scope="col">Format</th><th scope="col">DLC</th><th scope="col">Payload hex</th><th scope="col">CRC</th></tr></thead>
+              <tbody id="can-frame-rows"><tr><td colspan="6">No frames loaded.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
       <section class="tab-panel" id="panel-modbus" role="tabpanel" aria-labelledby="tab-modbus" data-panel="modbus" hidden>
@@ -388,6 +427,6 @@
 
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
-  <script src="/static/app.js?v=bus-discovery-1" defer></script>
+  <script src="/static/app.js?v=can-decode-v1" defer></script>
 </body>
 </html>

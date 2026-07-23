@@ -77,6 +77,32 @@ def _destuff(raw_bits: list[int], *, max_output_bits: int) -> tuple[list[int], b
     return output, True
 
 
+def _destuff_with_consumed(
+    raw_bits: list[int],
+    *,
+    max_output_bits: int,
+) -> tuple[list[int], bool, int]:
+    output: list[int] = []
+    previous: int | None = None
+    run = 0
+    for index, bit in enumerate(raw_bits):
+        if previous is not None and run == 5:
+            if bit == previous:
+                return output, False, index + 1
+            previous = bit
+            run = 1
+            continue
+        output.append(bit)
+        if bit == previous:
+            run += 1
+        else:
+            previous = bit
+            run = 1
+        if len(output) >= max_output_bits:
+            return output, True, index + 1
+    return output, True, len(raw_bits)
+
+
 def _parse_header(raw_bits: list[int]) -> dict[str, Any] | None:
     prefix, stuffing_valid = _destuff(raw_bits, max_output_bits=14)
     if not stuffing_valid or len(prefix) < 14 or prefix[0] != 0:
@@ -139,6 +165,61 @@ def _validate_classic_crc(
         return result
     result["crc_valid"] = frame_bits[-15:] == can_crc15_bits(frame_bits[:-15])
     return result
+
+
+def _parse_classic_frame(raw_bits: list[int]) -> dict[str, Any] | None:
+    """Parse one sampled Classical CAN candidate without trusting invalid payloads."""
+    header = _parse_header(raw_bits)
+    if header is None or header["fdf"]:
+        return None
+    if header["extended"]:
+        prefix_length = 39
+        data_start = 39
+        dlc_slice = slice(35, 39)
+        remote_index = 32
+    else:
+        prefix_length = 19
+        data_start = 19
+        dlc_slice = slice(15, 19)
+        remote_index = 12
+    prefix, valid = _destuff(raw_bits, max_output_bits=prefix_length)
+    if not valid or len(prefix) < prefix_length:
+        return None
+    remote = bool(prefix[remote_index])
+    dlc = _integer(prefix[dlc_slice])
+    payload_bit_count = 0 if remote else min(dlc, 8) * 8
+    required = data_start + payload_bit_count + 15
+    frame_bits, valid, consumed = _destuff_with_consumed(
+        raw_bits, max_output_bits=required
+    )
+    if not valid or len(frame_bits) < required:
+        return None
+    if frame_bits[-15:] != can_crc15_bits(frame_bits[:-15]):
+        return None
+    trailer = raw_bits[consumed:consumed + 10]
+    if (
+        len(trailer) < 10
+        or trailer[0] != 1
+        or trailer[2] != 1
+        or trailer[3:10] != [1] * 7
+    ):
+        return None
+    payload = bytes(
+        _integer(frame_bits[index:index + 8])
+        for index in range(data_start, data_start + payload_bit_count, 8)
+    )
+    identifier = int(header["identifier"])
+    return {
+        "identifier": identifier,
+        "identifier_hex": f"0x{identifier:08X}" if header["extended"] else f"0x{identifier:03X}",
+        "extended": bool(header["extended"]),
+        "remote": remote,
+        "dlc": dlc,
+        "payload_bytes": list(payload),
+        "payload_hex": payload.hex().upper(),
+        "crc_valid": True,
+        "complete_raw_bit_count": consumed + 10,
+    }
 
 
 def _j1939_pgn(identifier: int) -> int:
@@ -307,7 +388,162 @@ def _protocol_fingerprint(headers: list[dict[str, Any]], nominal_bitrate: int) -
     }
 
 
-def analyze_can_waveform(
+def _decode_can_orientation(
+    time_us: np.ndarray,
+    can_h: np.ndarray,
+    can_l: np.ndarray,
+) -> dict[str, Any]:
+    sample_interval_us = float(np.median(np.diff(time_us)))
+    if sample_interval_us > 0.25:
+        raise ValueError("CAN decode requires 0.25 us/sample or faster")
+    differential = can_h - can_l
+    low = float(np.quantile(differential, 0.01))
+    high = float(np.quantile(differential, 0.99))
+    if high - low < 0.5:
+        return {"frames": [], "rejected_candidate_count": 0}
+    dominant = differential > ((low + high) / 2.0)
+    edges = np.flatnonzero(dominant[1:] != dominant[:-1]) + 1
+    bitrate_matches = _infer_bitrates(np.diff(time_us[edges]), sample_interval_us)
+    candidates: list[dict[str, Any]] = []
+    for bitrate in (value for value in bitrate_matches if value in NOMINAL_BITRATES):
+        samples_per_bit = (1_000_000.0 / bitrate) / sample_interval_us
+        dominant_indices = np.flatnonzero(dominant)
+        if not dominant_indices.size:
+            continue
+        split_points = np.flatnonzero(np.diff(dominant_indices) > 10.5 * samples_per_bit) + 1
+        groups = [group for group in np.split(dominant_indices, split_points) if group.size]
+        frames: list[dict[str, Any]] = []
+        unsupported_fd_count = 0
+        for group in groups:
+            start = int(group[0])
+            end = min(dominant.size, int(np.ceil(int(group[-1]) + 11.0 * samples_per_bit)))
+            raw_bit_count = max(1, int(np.ceil((end - start) / samples_per_bit)))
+            centers = start + (np.arange(raw_bit_count, dtype=np.float64) + 0.5) * samples_per_bit
+            centers = centers[centers < dominant.size].astype(np.int64)
+            raw_bits = [0 if dominant[index] else 1 for index in centers]
+            frame = _parse_classic_frame(raw_bits)
+            if frame is None:
+                header = _parse_header(raw_bits)
+                if header is not None and header.get("fdf"):
+                    unsupported_fd_count += 1
+                continue
+            complete_end = min(
+                dominant.size,
+                int(np.ceil(start + int(frame["complete_raw_bit_count"]) * samples_per_bit)),
+            )
+            frame.pop("complete_raw_bit_count", None)
+            frame.update({
+                "timestamp_us": float(time_us[start] - time_us[0]),
+                "nominal_bitrate_bps": bitrate,
+                "source_sample_start": start,
+                "source_sample_end": complete_end,
+            })
+            frames.append(frame)
+        candidates.append({
+            "nominal_bitrate_bps": bitrate,
+            "frames": frames,
+            "rejected_candidate_count": len(groups) - len(frames),
+            "unsupported_fd_candidate_count": unsupported_fd_count,
+        })
+    if not candidates:
+        return {"frames": [], "rejected_candidate_count": 0}
+    return max(
+        candidates,
+        key=lambda item: (
+            len(item["frames"]),
+            -int(item["rejected_candidate_count"]),
+            int(item["nominal_bitrate_bps"]),
+        ),
+    )
+
+
+def aggregate_can_identifiers(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Summarize validated frames deterministically without inventing one-frame cadence."""
+    grouped: dict[tuple[int, bool], list[dict[str, Any]]] = {}
+    for frame in frames:
+        key = (int(frame["identifier"]), bool(frame["extended"]))
+        grouped.setdefault(key, []).append(frame)
+
+    summaries: list[dict[str, Any]] = []
+    for (identifier, extended), observed in sorted(grouped.items()):
+        ordered = sorted(observed, key=lambda item: float(item["timestamp_us"]))
+        timestamps = [float(item["timestamp_us"]) for item in ordered]
+        intervals = [later - earlier for earlier, later in zip(timestamps, timestamps[1:])]
+        payloads = [list(item.get("payload_bytes", [])) for item in ordered]
+        payload_states = [
+            (
+                bool(item.get("remote")),
+                int(item.get("dlc", len(payload))),
+                payload,
+            )
+            for item, payload in zip(ordered, payloads)
+        ]
+        payload_change_count = sum(
+            current != previous
+            for previous, current in zip(payload_states, payload_states[1:])
+        )
+        max_payload_length = max((len(payload) for payload in payloads), default=0)
+        byte_change_counts = [0] * max_payload_length
+        for previous, current in zip(payloads, payloads[1:]):
+            for index in range(max_payload_length):
+                previous_value = previous[index] if index < len(previous) else None
+                current_value = current[index] if index < len(current) else None
+                if previous_value != current_value:
+                    byte_change_counts[index] += 1
+        mean_period = sum(intervals) / len(intervals) if intervals else None
+        summaries.append({
+            "identifier": identifier,
+            "identifier_hex": f"0x{identifier:08X}" if extended else f"0x{identifier:03X}",
+            "extended": extended,
+            "frame_count": len(ordered),
+            "first_timestamp_us": timestamps[0],
+            "last_timestamp_us": timestamps[-1],
+            "observed_duration_us": timestamps[-1] - timestamps[0],
+            "mean_period_us": mean_period,
+            "mean_frequency_hz": 1_000_000.0 / mean_period if mean_period else None,
+            "min_interval_us": min(intervals) if intervals else None,
+            "max_interval_us": max(intervals) if intervals else None,
+            "payload_change_count": payload_change_count,
+            "last_payload_hex": str(ordered[-1].get("payload_hex", "")),
+            "byte_change_counts": byte_change_counts,
+        })
+    return summaries
+
+
+def decode_can_waveform(
+    time_us: np.ndarray,
+    can_h: np.ndarray,
+    can_l: np.ndarray,
+) -> dict[str, Any]:
+    """Extract only complete CRC-valid Classical CAN frames from sampled H/L traces."""
+    time_us = np.asarray(time_us, dtype=np.float64)
+    can_h = np.asarray(can_h, dtype=np.float64)
+    can_l = np.asarray(can_l, dtype=np.float64)
+    if time_us.size < 3 or time_us.shape != can_h.shape or can_h.shape != can_l.shape:
+        raise ValueError("CAN decode requires equal time, CAN-H, and CAN-L arrays")
+    if not np.all(np.isfinite(time_us)) or not np.all(np.isfinite(can_h)) or not np.all(np.isfinite(can_l)):
+        raise ValueError("CAN decode inputs must contain finite numeric samples")
+    if np.any(np.diff(time_us) <= 0):
+        raise ValueError("CAN decode timestamps must increase strictly")
+
+    expected = _decode_can_orientation(time_us, can_h, can_l)
+    if expected["frames"]:
+        expected["polarity"] = "expected"
+        expected["warnings"] = []
+        return expected
+    reversed_result = _decode_can_orientation(time_us, can_l, can_h)
+    if reversed_result["frames"]:
+        reversed_result["polarity"] = "reversed"
+        reversed_result["warnings"] = [
+            "CAN polarity is reversed relative to the recorded CAN-H/CAN-L source labels."
+        ]
+        return reversed_result
+    expected["polarity"] = "expected"
+    expected["warnings"] = []
+    return expected
+
+
+def _analyze_can_orientation(
     time_us: np.ndarray,
     can_h: np.ndarray,
     can_l: np.ndarray,
@@ -426,3 +662,38 @@ def analyze_can_waveform(
         },
         "warnings": [],
     }
+
+
+def analyze_can_waveform(
+    time_us: np.ndarray,
+    can_h: np.ndarray,
+    can_l: np.ndarray,
+) -> dict[str, Any]:
+    """Retain the aggregate analysis contract while adding validated frame detail."""
+    expected = _analyze_can_orientation(time_us, can_h, can_l)
+    try:
+        decoded = _decode_can_orientation(
+            np.asarray(time_us, dtype=np.float64),
+            np.asarray(can_h, dtype=np.float64),
+            np.asarray(can_l, dtype=np.float64),
+        )
+    except ValueError:
+        return expected
+
+    result = expected
+    frames = sorted(
+        decoded["frames"],
+        key=lambda frame: (
+            int(frame["identifier"]),
+            bool(frame["extended"]),
+            float(frame["timestamp_us"]),
+        ),
+    )
+    result.update({
+        "can_polarity": "expected",
+        "frames": frames,
+        "identifiers": aggregate_can_identifiers(frames),
+        "validated_frame_count": len(frames),
+        "rejected_candidate_count": decoded["rejected_candidate_count"],
+    })
+    return result

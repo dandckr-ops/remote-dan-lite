@@ -313,3 +313,52 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert 'profile: "network"' in script
     assert "preview_channels" in script
     assert "Legacy network preview withheld" in script
+
+
+def test_can_tab_exposes_accessible_bounded_existing_capture_decode_contract() -> None:
+    parser = parse_console()
+    required_ids = {
+        "can-decode-form",
+        "can-decode-source",
+        "can-decode-label",
+        "can-decode-button",
+        "can-decode-message",
+        "can-identifier-filter",
+        "can-changing-only",
+        "can-identifier-table",
+        "can-identifier-rows",
+        "can-frame-table",
+        "can-frame-rows",
+        "can-decode-row-truth",
+        "can-frames-artifact",
+        "can-identifiers-artifact",
+    }
+    assert required_ids <= parser.ids
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    can_markup = index.split('id="panel-can"', 1)[1].split('id="panel-modbus"', 1)[0]
+    assert "Decode existing capture" in can_markup
+    assert "generic Classical CAN decoding only" in can_markup
+    assert "no DBC or OEM signal meaning" in can_markup
+    assert "Identifier inventory" in can_markup
+    assert "Validated frames" in can_markup
+    assert "aria-live" in can_markup
+    assert "<caption" in can_markup
+
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    for unsafe_api in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        assert unsafe_api not in script
+    assert "function loadCanDecodeSources" in script
+    assert "function bindCanDecodeForm" in script
+    assert "function renderCanDecode" in script
+    assert 'getJson("/api/can-decode-sources")' in script
+    assert 'getJson("/api/can-decodes"' in script
+    assert "bindCanDecodeForm();" in script
+    assert "frames_truncated" in script
+    assert "identifier_limit" in script
+
+    styles = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+    assert ".can-decode-table-scroll" in styles
+    assert "overflow-x: auto" in styles
+    assert "@media (max-width: 620px)" in styles
+    assert "max-width: 100%" in styles
+    assert "can-decode-v1" in index

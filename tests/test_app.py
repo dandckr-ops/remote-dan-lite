@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 
@@ -462,3 +463,154 @@ def test_bus_sniffer_hardware_mode_fails_closed_when_pico_is_unavailable(
 
     assert response.status_code == 503
     assert "unavailable" in response.json()["detail"]
+
+
+def test_can_decode_api_lists_sources_creates_child_and_returns_bounded_rows(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+    )
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "Synthetic CAN decode source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    })
+    assert source.status_code == 201
+    source_manifest = source.json()
+
+    eligible = client.get("/api/can-decode-sources")
+    created = client.post("/api/can-decodes", json={
+        "source_run_id": source_manifest["run_id"],
+        "label": "API decode child",
+    })
+
+    assert eligible.status_code == 200
+    assert [item["run_id"] for item in eligible.json()["sources"]] == [source_manifest["run_id"]]
+    assert eligible.json()["writes_enabled"] is False
+    assert created.status_code == 201
+    child = created.json()
+    assert child["capture_type"] == "can_decode"
+    assert child["source_run_id"] == source_manifest["run_id"]
+    assert child["writes_performed"] == 0
+
+    result = client.get(f"/api/can-decodes/{child['run_id']}")
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["total_frame_count"] == child["frame_count"]
+    assert payload["returned_frame_count"] == len(payload["frames"])
+    assert payload["returned_frame_count"] <= payload["frame_limit"] == 200
+    assert payload["frames_truncated"] is (child["frame_count"] > 200)
+    assert payload["artifact_urls"] == {
+        "frames_jsonl": f"/artifacts/{child['run_id']}/frames.jsonl",
+        "identifiers_csv": f"/artifacts/{child['run_id']}/identifiers.csv",
+    }
+
+
+def test_can_decode_api_maps_malformed_missing_and_busy_requests(tmp_path: Path) -> None:
+    app = create_app(data_dir=tmp_path / "captures", db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+
+    assert client.post("/api/can-decodes", json={
+        "source_run_id": "../escape", "label": "bad",
+    }).status_code == 422
+    assert client.post("/api/can-decodes", json={
+        "source_run_id": "missing-source", "label": "missing",
+    }).status_code == 404
+    assert client.get("/api/can-decodes/../escape").status_code == 404
+
+    app.state.can_decode_manager._lock.acquire()
+    try:
+        response = client.post("/api/can-decodes", json={
+            "source_run_id": "missing-source", "label": "busy",
+        })
+    finally:
+        app.state.can_decode_manager._lock.release()
+    assert response.status_code == 409
+
+
+def test_can_decode_openapi_is_passive_and_has_no_bus_authority(tmp_path: Path) -> None:
+    schema = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+    ).openapi()
+    can_paths = {
+        path: methods for path, methods in schema["paths"].items()
+        if "can-decode" in path
+    }
+    assert set(can_paths) == {
+        "/api/can-decode-sources",
+        "/api/can-decodes",
+        "/api/can-decodes/{run_id}",
+    }
+    rendered = str(can_paths).lower()
+    for forbidden in ("transmit", "replay", "socketcan", "ack_generation", "write_payload"):
+        assert forbidden not in rendered
+
+
+def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    run_id = "synthetic-child-can-decode"
+    run_dir = capture_root / run_id
+    run_dir.mkdir(parents=True)
+    frames = [
+        {
+            "identifier": 0x100,
+            "identifier_hex": "0x100",
+            "extended": False,
+            "payload_hex": "00",
+        }
+        for _ in range(205)
+    ]
+    frames.append({
+        "identifier": 0x321,
+        "identifier_hex": "0x321",
+        "extended": False,
+        "payload_hex": "AA",
+    })
+    (run_dir / "frames.jsonl").write_text(
+        "".join(json.dumps(frame) + "\n" for frame in frames),
+        encoding="utf-8",
+    )
+    identifiers = [
+        {
+            "identifier": 0x100,
+            "identifier_hex": "0x100",
+            "extended": False,
+            "payload_change_count": 0,
+        },
+        {
+            "identifier": 0x321,
+            "identifier_hex": "0x321",
+            "extended": False,
+            "payload_change_count": 1,
+        },
+    ]
+    (run_dir / "summary.json").write_text(json.dumps({"identifiers": identifiers}))
+    (run_dir / "manifest.json").write_text(json.dumps({
+        "run_id": run_id,
+        "capture_type": "can_decode",
+        "frame_count": len(frames),
+        "identifier_count": len(identifiers),
+    }))
+    client = TestClient(create_app(
+        data_dir=capture_root,
+        db_path=tmp_path / "evidence.sqlite3",
+    ))
+
+    unfiltered = client.get(f"/api/can-decodes/{run_id}").json()
+    filtered = client.get(f"/api/can-decodes/{run_id}?identifier=0x321").json()
+    changing = client.get(f"/api/can-decodes/{run_id}?changing_only=true").json()
+
+    assert unfiltered["returned_frame_count"] == 200
+    assert unfiltered["total_frame_count"] == 206
+    assert unfiltered["frames_truncated"] is True
+    assert [frame["identifier_hex"] for frame in filtered["frames"]] == ["0x321"]
+    assert filtered["total_frame_count"] == filtered["returned_frame_count"] == 1
+    assert [item["identifier_hex"] for item in changing["identifiers"]] == ["0x321"]
