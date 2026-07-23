@@ -5,6 +5,14 @@ const state = {
   status: null,
   runs: [],
   scopeCatalog: null,
+  usbRouting: {
+    applying: false,
+    available: false,
+    devices: {},
+    initialRoutes: {},
+    inventoryRevision: null,
+    routes: {},
+  },
 };
 
 const tabs = $$('[role="tab"][data-tab]');
@@ -119,17 +127,99 @@ async function refreshStatus() {
   }
 }
 
+const usbRouteLabels = {
+  local: "Local to Remote Dan Lite",
+  virtualhere: "Forward through VirtualHere",
+};
+
+function setUsbRoutingMessage(text = "", kind = "") {
+  setMessage("#usb-routing-message", text, kind);
+}
+
+function usbRoutingChanges() {
+  const routing = state.usbRouting;
+  return Object.entries(routing.routes)
+    .filter(([key, route]) => routing.initialRoutes[key] !== route)
+    .map(([key, route]) => ({
+      key,
+      name: routing.devices[key] || key,
+      from: routing.initialRoutes[key],
+      to: route,
+    }));
+}
+
+function updateUsbRoutingControls() {
+  const routing = state.usbRouting;
+  const disabled = !routing.available || routing.applying;
+  $$("#usb-routing-list select").forEach((route) => {
+    route.disabled = disabled;
+  });
+  $("#usb-routing-apply").disabled = disabled || usbRoutingChanges().length === 0;
+}
+
+function usbRouteValue(device) {
+  return device.route === "virtualhere" ? "virtualhere" : "local";
+}
+
+async function applyUsbRouting() {
+  const routing = state.usbRouting;
+  const changes = usbRoutingChanges();
+  if (!changes.length) {
+    setUsbRoutingMessage("No USB routing changes to apply.");
+    return;
+  }
+  const changeSummary = changes.map(({name, key, from, to}) => (
+    `${name} (${key})\n  ${usbRouteLabels[from]} → ${usbRouteLabels[to]}`
+  )).join("\n\n");
+  if (!window.confirm(`Apply USB routing changes?\n\n${changeSummary}`)) {
+    setUsbRoutingMessage("USB routing changes were not applied.");
+    return;
+  }
+
+  routing.applying = true;
+  updateUsbRoutingControls();
+  setUsbRoutingMessage("Applying USB routing changes…");
+  try {
+    await getJson("/api/usb/routing/apply", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        inventory_revision: routing.inventoryRevision,
+        routes: routing.routes,
+        confirmed: true,
+      }),
+    });
+    await loadUsbRouting();
+    setUsbRoutingMessage("USB routing changes applied and inventory refreshed.", "success");
+  } catch (error) {
+    setUsbRoutingMessage(`USB routing failed: ${error.message}`, "error");
+  } finally {
+    state.usbRouting.applying = false;
+    updateUsbRoutingControls();
+  }
+}
+
 async function loadUsbRouting() {
   const list = $("#usb-routing-list");
   const status = $("#usb-routing-status");
-  const apply = $("#usb-routing-apply");
   try {
     const inventory = await getJson("/api/usb/devices");
     const control = inventory.routing_control || {};
     const devices = inventory.devices || [];
-    status.textContent = control.available ? "Routing ready" : "Read-only inventory";
-    status.className = `status-label ${control.available ? "live" : "planned"}`;
-    apply.disabled = !control.available;
+    const available = Boolean(control.available && control.inventory_revision);
+    state.usbRouting = {
+      applying: false,
+      available,
+      devices: Object.fromEntries(devices.map((device) => [
+        device.key,
+        device.product_name || `${device.vendor_id}:${device.product_id}`,
+      ])),
+      initialRoutes: Object.fromEntries(devices.map((device) => [device.key, usbRouteValue(device)])),
+      inventoryRevision: control.inventory_revision || null,
+      routes: Object.fromEntries(devices.map((device) => [device.key, usbRouteValue(device)])),
+    };
+    status.textContent = available ? "Routing ready" : "Read-only inventory";
+    status.className = `status-label ${available ? "live" : "planned"}`;
     list.replaceChildren(...devices.map((device) => {
       const row = document.createElement("article");
       row.className = "usb-routing-device";
@@ -145,7 +235,8 @@ async function loadUsbRouting() {
       identity.append(name, detail);
       const route = document.createElement("select");
       route.setAttribute("aria-label", `Routing for ${name.textContent}`);
-      route.disabled = !control.available;
+      route.dataset.usbRouteKey = device.key;
+      route.disabled = !available;
       [
         ["local", "Local to Remote Dan Lite"],
         ["virtualhere", "Forward through VirtualHere"],
@@ -153,8 +244,12 @@ async function loadUsbRouting() {
         const option = document.createElement("option");
         option.value = value;
         option.textContent = label;
-        option.selected = device.route === value;
         route.append(option);
+      });
+      route.value = state.usbRouting.routes[device.key];
+      route.addEventListener("change", () => {
+        state.usbRouting.routes[device.key] = route.value;
+        updateUsbRoutingControls();
       });
       row.append(identity, route);
       return row;
@@ -162,14 +257,17 @@ async function loadUsbRouting() {
     if (!devices.length) {
       list.textContent = "No USB devices detected.";
     }
-    if (!control.available) {
-      apply.title = control.reason || "VirtualHere routing is not commissioned.";
+    if (!available) {
+      $("#usb-routing-apply").title = control.reason || "VirtualHere routing is not commissioned.";
     }
+    updateUsbRoutingControls();
   } catch (error) {
     status.textContent = "Inventory unavailable";
     status.className = "status-label error";
     list.textContent = `USB inventory failed: ${error.message}`;
-    apply.disabled = true;
+    state.usbRouting = {...state.usbRouting, available: false};
+    updateUsbRoutingControls();
+    setUsbRoutingMessage(`USB inventory failed: ${error.message}`, "error");
   }
 }
 
@@ -942,6 +1040,7 @@ bindBusSurveyForm();
 bindSerialCaptureForm();
 bindCanCaptureForm();
 bindModbusScanForm();
+$("#usb-routing-apply").addEventListener("click", applyUsbRouting);
 $("#refresh").addEventListener("click", refreshRuns);
 loadScopeProfiles();
 loadModbusNetworks();

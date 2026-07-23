@@ -59,9 +59,37 @@ def test_usb_inventory_is_exposed_read_only_until_virtualhere_is_commissioned(tm
         }],
         "routing_control": {
             "available": False,
-            "reason": "VirtualHere routing is not commissioned on this console yet.",
+            "reason": "USB routing helper is not commissioned on this console yet.",
         },
     }
+
+
+class FakeRoutingClient:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, object]] = []
+
+    def request(self, payload: dict[str, object]) -> dict[str, object]:
+        self.requests.append(payload)
+        if payload["action"] == "status":
+            return {"available": True, "inventory_revision": "a" * 64, "allowed_devices": []}
+        return {"inventory_revision": payload["inventory_revision"], "allowed_devices": ["084f/c050"]}
+
+
+def test_usb_routing_apply_requires_explicit_confirmation_and_uses_helper(tmp_path: Path) -> None:
+    routing = FakeRoutingClient()
+    app = create_app(data_dir=tmp_path, routing_client=routing)
+    client = TestClient(app)
+    request = {"inventory_revision": "a" * 64, "routes": {"usb:084f:c050:ecom:1-1": "virtualhere"}}
+
+    denied = client.post("/api/usb/routing/apply", json=request)
+    applied = client.post("/api/usb/routing/apply", json={**request, "confirmed": True})
+
+    assert denied.status_code == 422
+    assert applied.status_code == 200
+    assert applied.json()["allowed_devices"] == ["084f/c050"]
+    assert routing.requests == [{
+        "action": "apply", "inventory_revision": "a" * 64, "routes": request["routes"],
+    }]
 
 
 def test_index_is_traceworks_capture_console(tmp_path: Path) -> None:

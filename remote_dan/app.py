@@ -50,6 +50,7 @@ from remote_dan.modbus_scan import (
 )
 from remote_dan.serial_analysis import SerialFraming
 from remote_dan.usb_inventory import list_usb_devices
+from remote_dan.routing_socket import RoutingSocketClient, RoutingSocketError
 from remote_dan.serial_capture import (
     SerialCaptureBackend,
     SerialCaptureManager,
@@ -129,6 +130,12 @@ class ModbusScanPayload(BaseModel):
     session_id: int | None = Field(default=None, ge=1)
 
 
+class UsbRoutingApplyPayload(BaseModel):
+    inventory_revision: str = Field(min_length=64, max_length=64)
+    routes: dict[str, Literal["local", "virtualhere"]]
+    confirmed: bool = False
+
+
 CapturePayload.model_rebuild()
 
 
@@ -191,6 +198,7 @@ def create_app(
     modbus_backend: ModbusScanBackend | None = None,
     bus_survey_backend: BusSurveyBackend | None = None,
     usb_inventory_probe: Callable[[], list[dict[str, str | None]]] = list_usb_devices,
+    routing_client: RoutingSocketClient | None = None,
 ) -> FastAPI:
     capture_dir = Path(data_dir)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -231,6 +239,7 @@ def create_app(
     app.state.serial_probe = serial_probe
     app.state.network_probe = network_probe
     app.state.usb_inventory_probe = usb_inventory_probe
+    app.state.routing_client = routing_client or RoutingSocketClient(Path("/run/remote-dan-routing/control.sock"))
     app.state.simulator = simulator
     app.state.serial_simulator = serial_simulator
     app.state.modbus_simulator = modbus_simulator
@@ -415,13 +424,37 @@ def create_app(
             devices = app.state.usb_inventory_probe()
         except OSError as exc:
             raise HTTPException(status_code=503, detail=f"USB inventory failed: {exc}") from exc
-        return {
-            "devices": devices,
-            "routing_control": {
-                "available": False,
-                "reason": "VirtualHere routing is not commissioned on this console yet.",
-            },
-        }
+        try:
+            control = app.state.routing_client.request({"action": "status"})
+        except (OSError, RoutingSocketError):
+            control = {"available": False, "reason": "USB routing helper is not commissioned on this console yet."}
+        allowed_devices = set(control.get("allowed_devices", [])) if control.get("available") else set()
+        rendered_devices = [
+            {
+                **device,
+                "route": (
+                    "virtualhere"
+                    if f"{device.get('vendor_id')}/{device.get('product_id')}" in allowed_devices
+                    else "local"
+                ),
+            }
+            for device in devices
+        ]
+        return {"devices": rendered_devices, "routing_control": control}
+
+    @app.post("/api/usb/routing/apply")
+    def apply_usb_routing(payload: UsbRoutingApplyPayload) -> dict[str, object]:
+        if not payload.confirmed:
+            raise HTTPException(status_code=422, detail="explicit routing confirmation is required")
+        if pico_lock.locked():
+            raise HTTPException(status_code=409, detail="a local scope or bus capture is active")
+        manager = app.state.serial_hardware_manager
+        if manager is not None and manager._lock.locked():
+            raise HTTPException(status_code=409, detail="a local SEL serial capture is active")
+        try:
+            return app.state.routing_client.request({"action": "apply", "inventory_revision": payload.inventory_revision, "routes": payload.routes})
+        except (OSError, RoutingSocketError) as exc:
+            raise HTTPException(status_code=503, detail=f"USB routing apply failed: {exc}") from exc
 
     @app.post("/api/serial/captures", status_code=201)
     def create_serial_capture(payload: SerialCapturePayload) -> dict[str, object]:

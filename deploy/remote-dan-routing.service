@@ -1,0 +1,23 @@
+[Unit]
+Description=Remote Dan Lite root USB-routing helper
+Requires=remote-dan-routing.socket
+After=remote-dan-routing.socket virtualhere-basler.service
+
+[Service]
+Type=exec
+User=root
+Group=root
+WorkingDirectory=/opt/remote-dan-lite
+ExecStart=/opt/remote-dan-lite/.venv/bin/python -m remote_dan.routing_helper_service --socket-activation
+Restart=on-failure
+RestartSec=2
+UMask=0077
+StateDirectory=remote-dan-routing
+ReadWritePaths=/etc/virtualhere /var/lib/remote-dan-routing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+RequiredBy=remote-dan-routing.socket

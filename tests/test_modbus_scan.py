@@ -120,6 +120,7 @@ def test_device_csv_escapes_spreadsheet_formula_prefixes(tmp_path: Path) -> None
         "product_code": "+cmd",
     }])
 
-    row = next(csv.DictReader(path.open(encoding="utf-8")))
-    assert row["vendor_name"].startswith("'=")
+    with path.open(encoding="utf-8") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["vendor_name"].startswith("'=HYPERLINK")
     assert row["product_code"].startswith("'+")

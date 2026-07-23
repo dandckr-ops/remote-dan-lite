@@ -251,11 +251,11 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
         assert value in index
 
 
-def test_overview_declares_read_only_usb_routing_card_with_a_guarded_apply_button() -> None:
+def test_overview_declares_usb_routing_apply_feedback_and_client_flow() -> None:
     parser = parse_console()
     index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert {"usb-routing-list", "usb-routing-status", "usb-routing-apply"} <= parser.ids
+    assert {"usb-routing-list", "usb-routing-status", "usb-routing-apply", "usb-routing-message"} <= parser.ids
     overview_markup = index.split('id="panel-overview"', 1)[1].split('id="panel-bus-sniffer"', 1)[0]
     assert "USB routing" in overview_markup
     assert "Local to Remote Dan Lite" in overview_markup
@@ -263,8 +263,17 @@ def test_overview_declares_read_only_usb_routing_card_with_a_guarded_apply_butto
     assert 'id="usb-routing-apply"' in overview_markup
     assert "disabled" in overview_markup.split('id="usb-routing-apply"', 1)[1].split(">", 1)[0]
     script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert "usbRouting" in script
     assert "function loadUsbRouting" in script
     assert 'getJson("/api/usb/devices")' in script
+    assert 'getJson("/api/usb/routing/apply"' in script
+    assert "inventory_revision" in script
+    assert "confirmed: true" in script
+    assert "window.confirm" in script
+    assert "function usbRoutingChanges" in script
+    assert 'route.addEventListener("change"' in script
+    assert "loadUsbRouting();" in script
+    assert "USB routing failed:" in script
 
 
 def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() -> None:
