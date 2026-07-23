@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from remote_dan.database import EvidenceDatabase
 
 CaptureMode = Literal["auto", "hardware", "simulator"]
+Coupling = Literal["AC", "DC"]
 
 
 @dataclass(frozen=True)
@@ -33,11 +34,144 @@ class CapturePreset:
         return ((self.samples - 1) * self.sample_interval_us) / 1000.0
 
 
+@dataclass(frozen=True)
+class ScopeChannelConfig:
+    channel: Literal["A", "B", "C", "D"]
+    enabled: bool
+    label: str
+    input_range_v: float
+    attenuation: float = 1.0
+    coupling: Coupling = "DC"
+
+    @property
+    def external_range_v(self) -> float:
+        return self.input_range_v * self.attenuation
+
+
+@dataclass(frozen=True)
+class ScopeProfile:
+    name: str
+    label: str
+    preset: str
+    channels: tuple[ScopeChannelConfig, ...]
+    description: str
+    warning: str = ""
+
+
+INPUT_RANGES_V = (0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
+ATTENUATIONS = (1.0, 10.0, 20.0)
+COUPLINGS: tuple[Coupling, ...] = ("DC", "AC")
+
+
 PRESETS = {
     "short": CapturePreset("short", samples=20_000, sample_interval_us=2),
     "medium": CapturePreset("medium", samples=100_000, sample_interval_us=2),
     "long": CapturePreset("long", samples=250_000, sample_interval_us=2),
+    "1s": CapturePreset("1s", samples=200_000, sample_interval_us=5),
+    "2s": CapturePreset("2s", samples=200_000, sample_interval_us=10),
+    "5s": CapturePreset("5s", samples=250_000, sample_interval_us=20),
+    "10s": CapturePreset("10s", samples=250_000, sample_interval_us=40),
 }
+
+
+def _scope_channels(
+    a: ScopeChannelConfig,
+    b: ScopeChannelConfig | None = None,
+) -> tuple[ScopeChannelConfig, ...]:
+    return (
+        a,
+        b or ScopeChannelConfig("B", False, "Channel B", 20.0),
+        ScopeChannelConfig("C", False, "Channel C", 20.0),
+        ScopeChannelConfig("D", False, "Channel D", 20.0),
+    )
+
+
+SCOPE_PROFILES = {
+    "general": ScopeProfile(
+        name="general",
+        label="General / custom",
+        preset="medium",
+        channels=_scope_channels(
+            ScopeChannelConfig("A", True, "Channel A", 20.0),
+            ScopeChannelConfig("B", True, "Channel B", 20.0),
+        ),
+        description="Safe high-range starting point for unknown low-voltage signals.",
+    ),
+    "secondary-ignition": ScopeProfile(
+        name="secondary-ignition",
+        label="Secondary ignition",
+        preset="medium",
+        channels=_scope_channels(
+            ScopeChannelConfig("A", True, "Secondary pickup", 20.0, coupling="AC")
+        ),
+        description="Fast ignition-event capture through an approved capacitive pickup.",
+        warning=(
+            "Use an approved capacitive secondary-ignition pickup. Never connect the "
+            "scope, BNC, or ground lead directly to secondary ignition voltage."
+        ),
+    ),
+    "crankshaft-vr": ScopeProfile(
+        name="crankshaft-vr",
+        label="Crankshaft · VR",
+        preset="2s",
+        channels=_scope_channels(
+            ScopeChannelConfig("A", True, "Crankshaft VR", 20.0, coupling="AC"),
+            ScopeChannelConfig("B", False, "Cam / sync", 20.0),
+        ),
+        description="Bipolar variable-reluctance crank signal with optional sync channel.",
+    ),
+    "crankshaft-hall": ScopeProfile(
+        name="crankshaft-hall",
+        label="Crankshaft · Hall",
+        preset="2s",
+        channels=_scope_channels(
+            ScopeChannelConfig("A", True, "Crankshaft Hall", 10.0),
+            ScopeChannelConfig("B", False, "Cam / sync", 10.0),
+        ),
+        description="DC-coupled digital crank signal with optional cam or #1 sync.",
+    ),
+    "injector-primary": ScopeProfile(
+        name="injector-primary",
+        label="Injector primary",
+        preset="long",
+        channels=_scope_channels(
+            ScopeChannelConfig("A", True, "Injector primary", 20.0, attenuation=20.0),
+            ScopeChannelConfig("B", False, "Current / sync", 20.0),
+        ),
+        description="Primary-side injector voltage using a properly rated 20:1 attenuator.",
+        warning="Confirm the attenuator voltage and category rating before connection.",
+    ),
+}
+
+
+def resolve_scope_profile(name: str) -> ScopeProfile:
+    try:
+        return SCOPE_PROFILES[name]
+    except KeyError as exc:
+        raise ValueError(f"unknown scope profile: {name}") from exc
+
+
+NETWORK_CHANNELS = (
+    ScopeChannelConfig("A", True, "VBAT", 1.0, attenuation=20.0),
+    ScopeChannelConfig("B", True, "CAN-H", 10.0),
+    ScopeChannelConfig("C", True, "CAN-L", 10.0),
+    ScopeChannelConfig("D", False, "TRIG", 10.0),
+)
+
+
+def scope_config_payload(channels: tuple[ScopeChannelConfig, ...]) -> list[dict[str, object]]:
+    return [
+        {
+            "channel": config.channel,
+            "enabled": config.enabled,
+            "label": config.label,
+            "input_range_v": config.input_range_v,
+            "attenuation": config.attenuation,
+            "coupling": config.coupling,
+            "external_range_v": config.external_range_v,
+        }
+        for config in channels
+    ]
 
 
 def resolve_preset(name: str) -> CapturePreset:
@@ -55,6 +189,35 @@ class CaptureRequest:
     capture_type: str = "scope"
     session_id: int | None = None
     test_type: str | None = None
+    profile: str = "network"
+    channels: tuple[ScopeChannelConfig, ...] = ()
+
+
+def resolve_capture_channels(request: CaptureRequest) -> tuple[ScopeChannelConfig, ...]:
+    if request.profile == "network":
+        if request.channels:
+            raise ValueError("the network profile channel map cannot be overridden")
+        return NETWORK_CHANNELS
+
+    profile = resolve_scope_profile(request.profile)
+    channels = request.channels or profile.channels
+    if len(channels) != 4 or {config.channel for config in channels} != {"A", "B", "C", "D"}:
+        raise ValueError("scope channels must contain A, B, C, and D once")
+    enabled = tuple(config for config in channels if config.enabled)
+    if not enabled:
+        raise ValueError("at least one scope channel must be enabled")
+    if len({config.label for config in enabled}) != len(enabled):
+        raise ValueError("enabled scope channel labels must be unique")
+    for config in channels:
+        if config.input_range_v not in INPUT_RANGES_V:
+            raise ValueError(f"unsupported input range: {config.input_range_v}")
+        if config.attenuation not in ATTENUATIONS:
+            raise ValueError(f"unsupported attenuation: {config.attenuation}")
+        if config.coupling not in COUPLINGS:
+            raise ValueError(f"unsupported coupling: {config.coupling}")
+        if config.enabled and config.attenuation == 20.0 and config.input_range_v > 20.0:
+            raise ValueError("20:1 attenuation is limited to a ±400 V external display range")
+    return tuple(sorted(channels, key=lambda config: config.channel))
 
 
 @dataclass(frozen=True)
@@ -63,6 +226,9 @@ class CaptureData:
     preset: CapturePreset
     time_us: np.ndarray
     channels: dict[str, np.ndarray]
+    profile: str = "network"
+    channel_configs: tuple[ScopeChannelConfig, ...] = ()
+    overflow_channels: tuple[str, ...] = ()
 
     @property
     def channel_names(self) -> tuple[str, ...]:
@@ -83,24 +249,75 @@ class SimulatorBackend:
         time_us = np.arange(preset.samples, dtype=np.float64) * preset.sample_interval_us
         time_s = time_us / 1_000_000.0
 
-        vbat = 13.65 + 0.035 * np.sin(2 * np.pi * 120 * time_s)
-        vbat += rng.normal(0.0, 0.006, preset.samples)
+        if request.profile == "network":
+            vbat = 13.65 + 0.035 * np.sin(2 * np.pi * 120 * time_s)
+            vbat += rng.normal(0.0, 0.006, preset.samples)
 
-        samples_per_bit = max(8, int(20 / preset.sample_interval_us))
-        bit_count = (preset.samples + samples_per_bit - 1) // samples_per_bit
-        dominant = rng.integers(0, 2, bit_count, dtype=np.int8)
-        bus = np.repeat(dominant, samples_per_bit)[: preset.samples].astype(np.float64)
-        edge_rounding = np.convolve(bus, np.ones(3) / 3.0, mode="same")
-        noise = rng.normal(0.0, 0.008, preset.samples)
-        can_h = 2.5 + 1.0 * edge_rounding + noise
-        can_l = 2.5 - 1.0 * edge_rounding - noise
+            samples_per_bit = max(8, int(20 / preset.sample_interval_us))
+            bit_count = (preset.samples + samples_per_bit - 1) // samples_per_bit
+            dominant = rng.integers(0, 2, bit_count, dtype=np.int8)
+            bus = np.repeat(dominant, samples_per_bit)[: preset.samples].astype(np.float64)
+            edge_rounding = np.convolve(bus, np.ones(3) / 3.0, mode="same")
+            noise = rng.normal(0.0, 0.008, preset.samples)
+            channels = {
+                "VBAT": vbat,
+                "CAN-H": 2.5 + 1.0 * edge_rounding + noise,
+                "CAN-L": 2.5 - 1.0 * edge_rounding - noise,
+            }
+            configs = resolve_capture_channels(request)
+        else:
+            configs = resolve_capture_channels(request)
+            enabled = tuple(config for config in configs if config.enabled)
+            channels = self._simulate_scope(request.profile, enabled, time_s, rng)
 
         return CaptureData(
             backend=self.name,
             preset=preset,
             time_us=time_us,
-            channels={"VBAT": vbat, "CAN-H": can_h, "CAN-L": can_l},
+            channels=channels,
+            profile=request.profile,
+            channel_configs=configs,
         )
+
+    @staticmethod
+    def _simulate_scope(
+        profile: str,
+        configs: tuple[ScopeChannelConfig, ...],
+        time_s: np.ndarray,
+        rng: np.random.Generator,
+    ) -> dict[str, np.ndarray]:
+        channels: dict[str, np.ndarray] = {}
+        for index, config in enumerate(configs):
+            noise = rng.normal(0.0, max(config.external_range_v * 0.0005, 0.001), time_s.size)
+            phase = index * np.pi / 5.0
+            if profile == "secondary-ignition":
+                period = 0.025
+                event_phase = np.mod(time_s + index * 0.004, period)
+                firing = np.exp(-event_phase / 0.00035) * min(8.0, config.external_range_v * 0.65)
+                burn = ((event_phase > 0.001) & (event_phase < 0.0035)).astype(float) * 1.4
+                values = firing + burn + noise
+            elif profile == "crankshaft-vr":
+                carrier = np.sin(2 * np.pi * 360 * time_s + phase)
+                missing_tooth = np.mod(time_s, 1 / 6.0) > 0.004
+                values = carrier * missing_tooth * min(18.0, config.external_range_v * 0.45) + noise
+            elif profile == "crankshaft-hall":
+                square = (np.sin(2 * np.pi * 300 * time_s + phase) >= 0).astype(float)
+                missing_tooth = np.mod(time_s, 0.2) > 0.006
+                values = square * missing_tooth * min(5.0, config.external_range_v * 0.5) + noise
+            elif profile == "injector-primary":
+                event_phase = np.mod(time_s + index * 0.01, 0.05)
+                values = np.full(time_s.size, 13.8)
+                values[(event_phase > 0.008) & (event_phase < 0.012)] = 0.8
+                flyback = (event_phase >= 0.012) & (event_phase < 0.013)
+                values[flyback] = min(80.0, config.external_range_v * 0.65) * np.exp(
+                    -(event_phase[flyback] - 0.012) / 0.00025
+                )
+                values += noise
+            else:
+                amplitude = max(config.external_range_v * 0.2, 0.05)
+                values = amplitude * np.sin(2 * np.pi * (80 + index * 35) * time_s + phase) + noise
+            channels[config.label] = values
+        return channels
 
 
 class CaptureBackend(Protocol):
@@ -193,18 +410,24 @@ class CaptureManager:
                     metadata={
                         "channels": list(data.channel_names),
                         "summary": summary,
+                        "profile": data.profile,
+                        "scope_config": scope_config_payload(data.channel_configs),
                     },
                 )
             manifest: dict[str, object] = {
                 "run_id": run_id,
                 "captured_at": captured_at.isoformat(),
                 "label": request.label.strip() or "capture",
+                "capture_type": request.capture_type,
+                "profile": data.profile,
                 "preset": data.preset.name,
                 "backend": data.backend,
                 "samples": data.preset.samples,
                 "sample_interval_us": data.preset.sample_interval_us,
                 "duration_ms": data.preset.duration_ms,
                 "channels": list(data.channel_names),
+                "scope_config": scope_config_payload(data.channel_configs),
+                "overflow_channels": list(data.overflow_channels),
                 "artifacts": artifacts,
                 "sha256": sha256,
                 "summary": summary,
@@ -252,35 +475,56 @@ class CaptureManager:
         data: CaptureData,
         captured_at: datetime,
     ) -> dict[str, object]:
-        vbat = data.channels["VBAT"]
-        can_h = data.channels["CAN-H"]
-        can_l = data.channels["CAN-L"]
-        differential = can_h - can_l
-        common_mode = (can_h + can_l) / 2.0
+        config_payload = scope_config_payload(data.channel_configs)
         summary: dict[str, object] = {
             "captured_at": captured_at.isoformat(),
             "label": request.label.strip() or "capture",
             "backend": data.backend,
+            "capture_type": request.capture_type,
+            "profile": data.profile,
             "preset": data.preset.name,
             "samples": data.preset.samples,
             "sample_interval_us": data.preset.sample_interval_us,
             "duration_ms": data.preset.duration_ms,
             "channel_stats": {name: _stats(values) for name, values in data.channels.items()},
-            "differential_b_minus_c": _stats(differential),
-            "common_mode": _stats(common_mode),
-            "can_h_can_l_correlation": float(np.corrcoef(can_h, can_l)[0, 1]),
+            "scope_config": config_payload,
+            "overflow_channels": list(data.overflow_channels),
         }
+
+        if data.profile == "network":
+            vbat = data.channels["VBAT"]
+            can_h = data.channels["CAN-H"]
+            can_l = data.channels["CAN-L"]
+            differential = can_h - can_l
+            common_mode = (can_h + can_l) / 2.0
+            summary.update({
+                "differential_b_minus_c": _stats(differential),
+                "common_mode": _stats(common_mode),
+                "can_h_can_l_correlation": float(np.corrcoef(can_h, can_l)[0, 1]),
+            })
+            stack = np.column_stack((data.time_us, vbat, can_h, can_l, differential, common_mode))
+            header = "time_us,vbat_v,can_h_v,can_l_v,diff_b_minus_c_v,common_mode_v"
+        else:
+            enabled_configs = {
+                config.label: config for config in data.channel_configs if config.enabled
+            }
+            stack = np.column_stack((data.time_us, *data.channels.values()))
+            headers = ["time_us"]
+            for label in data.channel_names:
+                config = enabled_configs[label]
+                safe_label = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "signal"
+                headers.append(f"{config.channel.lower()}_{safe_label}_v")
+            header = ",".join(headers)
+
         (run_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-
-        stack = np.column_stack((data.time_us, vbat, can_h, can_l, differential, common_mode))
         np.savetxt(
             run_dir / "capture.csv",
             stack,
             delimiter=",",
-            header="time_us,vbat_v,can_h_v,can_l_v,diff_b_minus_c_v,common_mode_v",
+            header=header,
             comments="",
             fmt="%.8g",
         )
@@ -298,7 +542,14 @@ class CaptureManager:
         max_points = 5_000
         stride = max(1, data.preset.samples // max_points)
         t_ms = data.time_us[::stride] / 1000.0
-        colors = {"CAN-H": "#5CFF9A", "CAN-L": "#65B7FF"}
+        colors = {
+            "A": "#FFBC42",
+            "B": "#5CFF9A",
+            "C": "#65B7FF",
+            "D": "#C8A7FF",
+            "CAN-H": "#5CFF9A",
+            "CAN-L": "#65B7FF",
+        }
 
         with plt.rc_context({
             "figure.facecolor": "#07100D",
@@ -311,14 +562,48 @@ class CaptureManager:
             "grid.color": "#284136",
             "font.family": "DejaVu Sans",
         }):
-            figure, axis = plt.subplots(1, 1, figsize=(12, 5.2), constrained_layout=True)
-            for name in ("CAN-H", "CAN-L"):
-                axis.plot(t_ms, data.channels[name][::stride], label=name, color=colors[name], linewidth=1)
-            axis.set_ylabel("BUS / V")
-            axis.set_xlabel("TIME / ms")
-            axis.legend(loc="upper right", frameon=False)
-            axis.grid(True, alpha=0.45)
-            figure.suptitle(f"FIELD JOURNAL · {request.label.strip() or 'CAPTURE'} · {data.preset.name.upper()}")
+            if data.profile == "network":
+                figure, axis = plt.subplots(1, 1, figsize=(12, 5.2), constrained_layout=True)
+                for name in ("CAN-H", "CAN-L"):
+                    axis.plot(
+                        t_ms,
+                        data.channels[name][::stride],
+                        label=name,
+                        color=colors[name],
+                        linewidth=1,
+                    )
+                axis.set_ylabel("BUS / V")
+                axis.set_xlabel("TIME / ms")
+                axis.legend(loc="upper right", frameon=False)
+                axis.grid(True, alpha=0.45)
+            else:
+                enabled_configs = [
+                    config for config in data.channel_configs if config.enabled
+                ]
+                figure, axes = plt.subplots(
+                    len(enabled_configs),
+                    1,
+                    figsize=(12, max(4.2, 2.5 * len(enabled_configs))),
+                    sharex=True,
+                    squeeze=False,
+                    constrained_layout=True,
+                )
+                for axis, config in zip(axes[:, 0], enabled_configs, strict=True):
+                    axis.plot(
+                        t_ms,
+                        data.channels[config.label][::stride],
+                        color=colors[config.channel],
+                        linewidth=1,
+                    )
+                    axis.set_ylabel(f"{config.channel} · {config.label} / V")
+                    axis.set_ylim(-config.external_range_v, config.external_range_v)
+                    axis.grid(True, alpha=0.45)
+                axes[-1, 0].set_xlabel("TIME / ms")
+
+            figure.suptitle(
+                f"FIELD JOURNAL · {request.label.strip() or 'CAPTURE'} · "
+                f"{data.profile.upper()} · {data.preset.name.upper()}"
+            )
             figure.savefig(png_path, dpi=150, metadata={"Software": "Remote Dan Lite"})
             figure.savefig(pdf_path, format="pdf", metadata={
                 "Title": f"Remote Dan Lite capture: {request.label.strip() or 'capture'}",

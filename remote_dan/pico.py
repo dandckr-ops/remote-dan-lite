@@ -5,27 +5,35 @@ import time
 
 import numpy as np
 
-from remote_dan.capture import CaptureData, CaptureRequest, resolve_preset
+from remote_dan.capture import (
+    CaptureData,
+    CaptureRequest,
+    ScopeChannelConfig,
+    resolve_capture_channels,
+    resolve_preset,
+)
 
 
 class PicoPS2000ABackend:
-    """Three-channel PS2000A streaming acquisition for the 2406B field harness."""
+    """Profile-driven PS2000A streaming acquisition for the 2406B field harness."""
 
     name = "ps2000a"
-    _RANGE_MV = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000]
+    _RANGE_MV = (10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000)
+    _RANGE_INDEX_BY_V = {millivolts / 1000.0: index for index, millivolts in enumerate(_RANGE_MV)}
 
-    def __init__(
-        self,
-        *,
-        vbat_attenuation: float = 20.0,
-        can_h_attenuation: float = 1.0,
-        can_l_attenuation: float = 1.0,
-        buffer_samples: int = 5_000,
-    ) -> None:
-        self.vbat_attenuation = vbat_attenuation
-        self.can_h_attenuation = can_h_attenuation
-        self.can_l_attenuation = can_l_attenuation
+    def __init__(self, *, buffer_samples: int = 5_000) -> None:
         self.buffer_samples = buffer_samples
+
+    @classmethod
+    def range_index(cls, input_range_v: float) -> int:
+        from remote_dan.capture import INPUT_RANGES_V
+
+        if input_range_v not in INPUT_RANGES_V:
+            raise ValueError(f"unsupported 2406B input range: {input_range_v} V")
+        try:
+            return cls._RANGE_INDEX_BY_V[input_range_v]
+        except KeyError as exc:
+            raise ValueError(f"unsupported 2406B input range: {input_range_v} V") from exc
 
     @staticmethod
     def _to_volts(raw: np.ndarray, range_index: int, max_adc: int, attenuation: float) -> np.ndarray:
@@ -37,51 +45,57 @@ class PicoPS2000ABackend:
         from picosdk.ps2000a import ps2000a as ps
 
         preset = resolve_preset(request.preset)
+        configs = resolve_capture_channels(request)
+        enabled_configs = tuple(config for config in configs if config.enabled)
         total_samples = preset.samples
         chunk_samples = min(self.buffer_samples, total_samples)
         if total_samples % chunk_samples:
             raise ValueError("capture sample count must be divisible by the streaming buffer")
 
-        channel_a = ps.PS2000A_CHANNEL["PS2000A_CHANNEL_A"]
-        channel_b = ps.PS2000A_CHANNEL["PS2000A_CHANNEL_B"]
-        channel_c = ps.PS2000A_CHANNEL["PS2000A_CHANNEL_C"]
-        channel_d = ps.PS2000A_CHANNEL["PS2000A_CHANNEL_D"]
-        dc = ps.PS2000A_COUPLING["PS2000A_DC"]
+        channel_ids = {
+            letter: ps.PS2000A_CHANNEL[f"PS2000A_CHANNEL_{letter}"]
+            for letter in ("A", "B", "C", "D")
+        }
+        coupling_ids = {
+            "AC": ps.PS2000A_COUPLING["PS2000A_AC"],
+            "DC": ps.PS2000A_COUPLING["PS2000A_DC"],
+        }
         ratio_none = ps.PS2000A_RATIO_MODE["PS2000A_RATIO_MODE_NONE"]
-        a_range = ps.PS2000A_RANGE["PS2000A_1V"]
-        bc_range = ps.PS2000A_RANGE["PS2000A_10V"]
 
         handle = ctypes.c_int16()
         opened = False
         try:
             assert_pico_ok(ps.ps2000aOpenUnit(ctypes.byref(handle), None))
             opened = True
-            for channel, enabled, voltage_range in (
-                (channel_a, 1, a_range),
-                (channel_b, 1, bc_range),
-                (channel_c, 1, bc_range),
-                (channel_d, 0, bc_range),
-            ):
+            range_indexes: dict[str, int] = {}
+            for config in configs:
+                range_index = self.range_index(config.input_range_v)
+                range_indexes[config.channel] = range_index
                 assert_pico_ok(
-                    ps.ps2000aSetChannel(handle, channel, enabled, dc, voltage_range, 0.0)
+                    ps.ps2000aSetChannel(
+                        handle,
+                        channel_ids[config.channel],
+                        int(config.enabled),
+                        coupling_ids[config.coupling],
+                        range_index,
+                        0.0,
+                    )
                 )
 
             buffers = {
-                "A": np.zeros(chunk_samples, dtype=np.int16),
-                "B": np.zeros(chunk_samples, dtype=np.int16),
-                "C": np.zeros(chunk_samples, dtype=np.int16),
+                config.channel: np.zeros(chunk_samples, dtype=np.int16)
+                for config in enabled_configs
             }
             complete = {
-                "A": np.zeros(total_samples, dtype=np.int16),
-                "B": np.zeros(total_samples, dtype=np.int16),
-                "C": np.zeros(total_samples, dtype=np.int16),
+                config.channel: np.zeros(total_samples, dtype=np.int16)
+                for config in enabled_configs
             }
-            for key, channel in (("A", channel_a), ("B", channel_b), ("C", channel_c)):
+            for config in enabled_configs:
                 assert_pico_ok(
                     ps.ps2000aSetDataBuffers(
                         handle,
-                        channel,
-                        buffers[key].ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
+                        channel_ids[config.channel],
+                        buffers[config.channel].ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
                         None,
                         chunk_samples,
                         0,
@@ -104,31 +118,35 @@ class PicoPS2000ABackend:
                 )
             )
 
-            state = {"next": 0, "called": False, "auto_stop": False}
+            state = {"next": 0, "called": False, "auto_stop": False, "overflow_mask": 0}
 
             def streaming_callback(
                 _handle: int,
                 number_of_samples: int,
                 start_index: int,
-                _overflow: int,
+                overflow: int,
                 _trigger_at: int,
                 _triggered: int,
                 auto_stop: int,
                 _parameter: object,
             ) -> None:
                 state["called"] = True
+                state["overflow_mask"] = int(state["overflow_mask"]) | int(overflow)
                 remaining = total_samples - int(state["next"])
                 count = min(int(number_of_samples), remaining)
                 destination_start = int(state["next"])
                 destination_end = destination_start + count
                 source_end = int(start_index) + count
-                for key in ("A", "B", "C"):
-                    complete[key][destination_start:destination_end] = buffers[key][int(start_index):source_end]
+                for config in enabled_configs:
+                    key = config.channel
+                    complete[key][destination_start:destination_end] = buffers[key][
+                        int(start_index):source_end
+                    ]
                 state["next"] = destination_end
                 state["auto_stop"] = bool(auto_stop)
 
             callback = ps.StreamingReadyType(streaming_callback)
-            deadline = time.monotonic() + 90.0
+            deadline = time.monotonic() + max(90.0, preset.duration_ms / 1000.0 * 3.0 + 10.0)
             while int(state["next"]) < total_samples and not bool(state["auto_stop"]):
                 state["called"] = False
                 assert_pico_ok(ps.ps2000aGetStreamingLatestValues(handle, callback, None))
@@ -147,10 +165,20 @@ class PicoPS2000ABackend:
             max_adc = ctypes.c_int16()
             assert_pico_ok(ps.ps2000aMaximumValue(handle, ctypes.byref(max_adc)))
             channels = {
-                "VBAT": self._to_volts(complete["A"], a_range, max_adc.value, self.vbat_attenuation),
-                "CAN-H": self._to_volts(complete["B"], bc_range, max_adc.value, self.can_h_attenuation),
-                "CAN-L": self._to_volts(complete["C"], bc_range, max_adc.value, self.can_l_attenuation),
+                config.label: self._to_volts(
+                    complete[config.channel],
+                    range_indexes[config.channel],
+                    max_adc.value,
+                    config.attenuation,
+                )
+                for config in enabled_configs
             }
+            overflow_mask = int(state["overflow_mask"])
+            overflow_channels = tuple(
+                config.channel
+                for config in enabled_configs
+                if overflow_mask & (1 << channel_ids[config.channel])
+            )
             time_us = np.arange(total_samples, dtype=np.float64) * int(sample_interval.value)
             actual_preset = type(preset)(
                 name=preset.name,
@@ -162,6 +190,9 @@ class PicoPS2000ABackend:
                 preset=actual_preset,
                 time_us=time_us,
                 channels=channels,
+                profile=request.profile,
+                channel_configs=configs,
+                overflow_channels=overflow_channels,
             )
         finally:
             if opened:

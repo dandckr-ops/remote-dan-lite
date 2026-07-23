@@ -23,9 +23,10 @@ This repository deliberately separates proven behavior from source-complete and 
 | Area | Status | Honest boundary |
 |---|---|---|
 | Pi 5 + PicoScope 2406B network capture | **Proven** | Hardware acquisition has produced bounded VBAT/CAN captures and downloadable evidence packages. |
+| Configurable Scope workspace | **Hardware-preflight proven** | The real 2406B accepted profile-driven A–D enable state, AC/DC coupling, ±20 mV through ±20 V input ranges, 1:1/10:1/20:1 scaling, and a 10-second 250,000-sample capture. Secondary ignition requires a capacitive pickup and never a direct secondary connection. |
 | Artifact generation | **Proven** | Each run produces CSV, JSON, PNG, PDF, and a checksum manifest. |
-| SQLite evidence index | **Implemented and tested in this repository** | The schema and repository preserve lineage, but the currently deployed appliance runtime still needs a governed rollout of this source revision. |
-| Session-centered tabs | **Implemented in this repository** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence share one capture state. Serial and guided-test acquisition remain explicit commissioning boundaries. |
+| SQLite evidence index | **Proven live** | The appliance preserves capture/artifact lineage locally while waveform and report files remain ordinary filesystem artifacts. |
+| Session-centered tabs | **Proven live** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Serial and guided-test acquisition remain explicit commissioning boundaries. |
 | Anybus AB7702 Modbus satellite | **Connected satellite** | The gateway is configured and reachable for Modbus TCP/RTU. Remote Dan API/UI integration is still pending. |
 | OOB recovery node and field enclosure | **Architecture target** | These remain part of the three-plane appliance design, not a claim that the finished enclosure is commissioned. |
 
@@ -33,8 +34,8 @@ This repository deliberately separates proven behavior from source-complete and 
 
 A bounded Pico capture creates a timestamped evidence directory containing:
 
-- `capture.csv` — raw time, VBAT, CAN-H, CAN-L, differential, and common-mode samples
-- `summary.json` — channel statistics and derived bus measurements
+- `capture.csv` — raw time and enabled engineering-unit channels; network captures also retain VBAT, CAN-H, CAN-L, differential, and common mode
+- `summary.json` — channel statistics, profile/channel configuration, overflow state, and network-derived measurements where applicable
 - `overview.png` — quick visual review
 - `report.pdf` — Field Journal report artifact
 - `manifest.json` — run identity, backend, channels, artifact list, and SHA-256 checksums
@@ -71,6 +72,10 @@ The implemented primary navigation is:
 `Overview · Scope · Serial · CAN · Tests · Timeline · Evidence`
 
 Connections and System remain secondary setup surfaces. Tabs configure or inspect one synchronized diagnostic session; they do not create separate acquisition implementations.
+
+**Scope** is the configurable physical-signal workspace. It provides General, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary starting profiles; 40 ms through 10 s windows; four channel enable/label controls; AC/DC coupling; model-proven input ranges; probe scaling; and bounded next-capture auto-range suggestions.
+
+**CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
 
 Guided tests such as relative compression and cylinder contribution belong under **Tests**. They configure reusable capture engines and preserve the raw evidence, calculations, confidence, and operator interpretation.
 

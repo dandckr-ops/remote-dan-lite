@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=scope-gauge-1">
+  <link rel="stylesheet" href="/static/app.css?v=scope-workspace-2">
 </head>
 <body>
   <div class="shell">
@@ -36,22 +36,16 @@
       <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
         <div class="overview-grid">
           <section class="panel battery-card">
-            <div class="panel-heading compact">
-              <div><span class="section-number">A</span><h2>Battery voltage</h2></div>
-              <p>Latest capture mean</p>
-            </div>
-            <div class="digital-readout" aria-live="polite">
-              <strong id="vbat-value" data-vbat-value>--.--</strong><span>V</span>
-            </div>
-            <p class="readout-detail" id="vbat-detail" data-vbat-detail>No capture loaded. Raw VBAT remains in every evidence package.</p>
+            <div class="panel-heading compact"><div><span class="section-number">A</span><h2>Battery voltage</h2></div><p>Latest CAN/network capture</p></div>
+            <div class="digital-readout" aria-live="polite"><strong id="vbat-value" data-vbat-value>--.--</strong><span>V</span></div>
+            <p class="readout-detail" id="vbat-detail" data-vbat-detail>No network capture loaded. Raw VBAT remains in every network evidence package.</p>
           </section>
 
           <section class="panel latest-card">
-            <div class="panel-heading compact">
-              <div><span class="section-number">B</span><h2>Latest capture</h2></div>
-            </div>
+            <div class="panel-heading compact"><div><span class="section-number">B</span><h2>Latest capture</h2></div></div>
             <dl class="node-facts latest-facts">
               <div><dt>Label</dt><dd id="latest-label">—</dd></div>
+              <div><dt>Profile</dt><dd id="latest-profile">—</dd></div>
               <div><dt>Backend</dt><dd id="latest-backend">—</dd></div>
               <div><dt>Window</dt><dd id="latest-window">—</dd></div>
               <div><dt>Captured</dt><dd id="latest-time">—</dd></div>
@@ -59,9 +53,7 @@
           </section>
 
           <section class="panel node-card">
-            <div class="panel-heading compact">
-              <div><span class="section-number">C</span><h2>Capture plane</h2></div>
-            </div>
+            <div class="panel-heading compact"><div><span class="section-number">C</span><h2>Capture plane</h2></div></div>
             <dl class="node-facts">
               <div><dt>Service</dt><dd id="service-version">—</dd></div>
               <div><dt>Default backend</dt><dd id="backend">—</dd></div>
@@ -72,13 +64,11 @@
           </section>
 
           <section class="panel workflow-card">
-            <div class="panel-heading compact">
-              <div><span class="section-number">D</span><h2>Session workflow</h2></div>
-            </div>
+            <div class="panel-heading compact"><div><span class="section-number">D</span><h2>Acquisition lanes</h2></div></div>
             <div class="workflow-body">
-              <p>Acquire once. Inspect the same run across Scope, CAN, Timeline, and Evidence.</p>
-              <button class="action-link" type="button" data-open-tab="scope">Open capture controls</button>
-              <button class="action-link secondary" type="button" data-open-tab="evidence">Review evidence packages</button>
+              <p>Scope owns configurable physical signals. CAN owns the commissioned VBAT/CAN-H/CAN-L network harness.</p>
+              <button class="action-link" type="button" data-open-tab="scope">Open Scope workspace</button>
+              <button class="action-link secondary" type="button" data-open-tab="can">Open CAN network capture</button>
             </div>
           </section>
         </div>
@@ -86,67 +76,121 @@
 
       <section class="tab-panel" id="panel-scope" role="tabpanel" aria-labelledby="tab-scope" data-panel="scope" hidden>
         <div class="scope-layout">
+          <section class="panel profile-panel">
+            <div class="panel-heading">
+              <div><span class="section-number">01</span><h2>Signal profile</h2></div>
+              <p>Starting points, not diagnostic conclusions</p>
+            </div>
+            <div class="profile-buttons" role="group" aria-label="Scope signal profile">
+              <button type="button" class="profile-button selected" data-scope-profile="general">General / custom</button>
+              <button type="button" class="profile-button" data-scope-profile="secondary-ignition">Secondary ignition</button>
+              <button type="button" class="profile-button" data-scope-profile="crankshaft-vr">Crankshaft · VR</button>
+              <button type="button" class="profile-button" data-scope-profile="crankshaft-hall">Crankshaft · Hall</button>
+              <button type="button" class="profile-button" data-scope-profile="injector-primary">Injector primary</button>
+            </div>
+            <div class="profile-copy">
+              <p id="scope-profile-description">Safe high-range starting point for unknown low-voltage signals.</p>
+              <p id="scope-profile-warning" class="safety-warning hidden"></p>
+            </div>
+          </section>
+
           <section class="instrument panel">
             <div class="panel-heading">
-              <div><span class="section-number">01</span><h2>Capture window</h2></div>
-              <p>Bounded acquisition · one operator action</p>
+              <div><span class="section-number">02</span><h2>Scope setup</h2></div>
+              <p>Input range is at the Pico · scaled range includes probe ratio</p>
             </div>
-            <form id="capture-form" class="capture-form">
-              <label class="field wide">
+            <form id="scope-capture-form" class="scope-capture-form">
+              <input type="hidden" id="scope-profile" name="profile" value="general">
+              <label class="field scope-label-field">
                 <span>Evidence label</span>
-                <input id="label" name="label" maxlength="80" value="bench CAN proof" autocomplete="off">
+                <input id="scope-label" name="label" maxlength="80" value="general signal capture" autocomplete="off">
               </label>
               <label class="field">
-                <span>Window</span>
-                <select id="preset" name="preset">
-                  <option value="short">Short · 40 ms</option>
-                  <option value="medium">Medium · 200 ms</option>
-                  <option value="long">Long · 500 ms</option>
+                <span>Collection window</span>
+                <select id="scope-window" name="preset">
+                  <option value="short">40 ms · 500 kS/s</option>
+                  <option value="medium" selected>200 ms · 500 kS/s</option>
+                  <option value="long">500 ms · 500 kS/s</option>
+                  <option value="1s">1 s · 200 kS/s</option>
+                  <option value="2s">2 s · 100 kS/s</option>
+                  <option value="5s">5 s · 50 kS/s</option>
+                  <option value="10s">10 s · 25 kS/s</option>
                 </select>
               </label>
               <label class="field">
                 <span>Source</span>
-                <select id="mode" name="mode">
+                <select id="scope-mode" name="mode">
                   <option value="auto">Auto</option>
                   <option value="simulator">Simulator</option>
                   <option value="hardware">Pico hardware</option>
                 </select>
               </label>
-              <button class="capture-button" id="capture-button" type="submit">
-                <span class="button-mark"></span>
-                Arm & capture
-              </button>
-            </form>
-            <div class="message" id="message" aria-live="polite">Waiting for operator.</div>
 
-            <div class="channel-strip" aria-label="Configured channels">
-              <article><b>A</b><span>VBAT</span><small>digital value + raw evidence</small></article>
-              <article class="live"><b>B</b><span>CAN-H</span><small>signal high</small></article>
-              <article class="live alt"><b>C</b><span>CAN-L</span><small>signal low</small></article>
-              <article class="muted"><b>D</b><span>TRIG</span><small>reserved</small></article>
-            </div>
+              <div class="scope-tools" aria-label="Scope setup tools">
+                <button id="scope-autoscale" class="tool-button" type="button">Auto-scale ranges</button>
+                <button id="scope-apply-20x" class="tool-button" type="button">20:1 on enabled</button>
+                <button id="scope-reset-profile" class="tool-button" type="button">Reset profile</button>
+              </div>
+
+              <div class="channel-configurator" aria-label="Scope channel configuration">
+                <article class="channel-config channel-a" data-scope-channel="A">
+                  <div class="channel-title"><label><input id="scope-channel-A-enabled" type="checkbox" checked><b>A</b><span>Enabled</span></label><output id="scope-channel-A-external">±20 V scaled</output></div>
+                  <label class="field"><span>Signal label</span><input id="scope-channel-A-label" maxlength="40" value="Channel A"></label>
+                  <div class="channel-fields">
+                    <label class="field"><span>Input range</span><select id="scope-channel-A-range" data-scope-range><option value="0.02">±20 mV</option><option value="0.05">±50 mV</option><option value="0.1">±100 mV</option><option value="0.2">±200 mV</option><option value="0.5">±500 mV</option><option value="1">±1 V</option><option value="2">±2 V</option><option value="5">±5 V</option><option value="10">±10 V</option><option value="20" selected>±20 V</option></select></label>
+                    <label class="field"><span>Probe</span><select id="scope-channel-A-attenuation" data-scope-attenuation><option value="1">1:1</option><option value="10">10:1</option><option value="20">20:1</option></select></label>
+                    <label class="field"><span>Coupling</span><select id="scope-channel-A-coupling"><option value="DC">DC</option><option value="AC">AC</option></select></label>
+                  </div>
+                </article>
+                <article class="channel-config channel-b" data-scope-channel="B">
+                  <div class="channel-title"><label><input id="scope-channel-B-enabled" type="checkbox" checked><b>B</b><span>Enabled</span></label><output id="scope-channel-B-external">±20 V scaled</output></div>
+                  <label class="field"><span>Signal label</span><input id="scope-channel-B-label" maxlength="40" value="Channel B"></label>
+                  <div class="channel-fields">
+                    <label class="field"><span>Input range</span><select id="scope-channel-B-range" data-scope-range><option value="0.02">±20 mV</option><option value="0.05">±50 mV</option><option value="0.1">±100 mV</option><option value="0.2">±200 mV</option><option value="0.5">±500 mV</option><option value="1">±1 V</option><option value="2">±2 V</option><option value="5">±5 V</option><option value="10">±10 V</option><option value="20" selected>±20 V</option></select></label>
+                    <label class="field"><span>Probe</span><select id="scope-channel-B-attenuation" data-scope-attenuation><option value="1">1:1</option><option value="10">10:1</option><option value="20">20:1</option></select></label>
+                    <label class="field"><span>Coupling</span><select id="scope-channel-B-coupling"><option value="DC">DC</option><option value="AC">AC</option></select></label>
+                  </div>
+                </article>
+                <article class="channel-config channel-c disabled" data-scope-channel="C">
+                  <div class="channel-title"><label><input id="scope-channel-C-enabled" type="checkbox"><b>C</b><span>Enabled</span></label><output id="scope-channel-C-external">Disabled</output></div>
+                  <label class="field"><span>Signal label</span><input id="scope-channel-C-label" maxlength="40" value="Channel C"></label>
+                  <div class="channel-fields">
+                    <label class="field"><span>Input range</span><select id="scope-channel-C-range" data-scope-range><option value="0.02">±20 mV</option><option value="0.05">±50 mV</option><option value="0.1">±100 mV</option><option value="0.2">±200 mV</option><option value="0.5">±500 mV</option><option value="1">±1 V</option><option value="2">±2 V</option><option value="5">±5 V</option><option value="10">±10 V</option><option value="20" selected>±20 V</option></select></label>
+                    <label class="field"><span>Probe</span><select id="scope-channel-C-attenuation" data-scope-attenuation><option value="1">1:1</option><option value="10">10:1</option><option value="20">20:1</option></select></label>
+                    <label class="field"><span>Coupling</span><select id="scope-channel-C-coupling"><option value="DC">DC</option><option value="AC">AC</option></select></label>
+                  </div>
+                </article>
+                <article class="channel-config channel-d disabled" data-scope-channel="D">
+                  <div class="channel-title"><label><input id="scope-channel-D-enabled" type="checkbox"><b>D</b><span>Enabled</span></label><output id="scope-channel-D-external">Disabled</output></div>
+                  <label class="field"><span>Signal label</span><input id="scope-channel-D-label" maxlength="40" value="Channel D"></label>
+                  <div class="channel-fields">
+                    <label class="field"><span>Input range</span><select id="scope-channel-D-range" data-scope-range><option value="0.02">±20 mV</option><option value="0.05">±50 mV</option><option value="0.1">±100 mV</option><option value="0.2">±200 mV</option><option value="0.5">±500 mV</option><option value="1">±1 V</option><option value="2">±2 V</option><option value="5">±5 V</option><option value="10">±10 V</option><option value="20" selected>±20 V</option></select></label>
+                    <label class="field"><span>Probe</span><select id="scope-channel-D-attenuation" data-scope-attenuation><option value="1">1:1</option><option value="10">10:1</option><option value="20">20:1</option></select></label>
+                    <label class="field"><span>Coupling</span><select id="scope-channel-D-coupling"><option value="DC">DC</option><option value="AC">AC</option></select></label>
+                  </div>
+                </article>
+              </div>
+
+              <p class="range-note">Range is the voltage at the Pico input. “Scaled” is display math after the selected probe ratio. Probe and accessory ratings still govern.</p>
+              <button class="capture-button" id="scope-capture-button" type="submit"><span class="button-mark"></span>Arm Scope capture</button>
+            </form>
+            <div class="message" id="scope-message" aria-live="polite">Choose a profile, verify the connection, then arm.</div>
           </section>
 
           <section class="preview panel">
             <div class="panel-heading">
-              <div><span class="section-number">02</span><h2>Latest network waveform</h2></div>
-              <a id="latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a>
+              <div><span class="section-number">03</span><h2>Latest Scope waveform</h2></div>
+              <a id="scope-latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a>
             </div>
             <div class="network-evidence-layout">
-              <aside class="scope-voltage-gauge" aria-label="Latest capture battery voltage">
-                <div class="scope-gauge-label"><span>Channel A</span><strong>Battery voltage</strong></div>
-                <div class="digital-readout scope-readout" aria-live="polite">
-                  <strong id="scope-vbat-value" data-vbat-value>--.--</strong><span>V</span>
-                </div>
-                <p class="readout-detail" id="scope-vbat-detail" data-vbat-detail>No capture loaded. Raw VBAT remains in every evidence package.</p>
+              <aside class="scope-voltage-gauge" aria-label="Latest primary Scope channel">
+                <div class="scope-gauge-label"><span>Primary channel</span><strong id="scope-primary-label">No signal</strong></div>
+                <div class="digital-readout scope-readout" aria-live="polite"><strong id="scope-primary-value">--.--</strong><span>V</span></div>
+                <p class="readout-detail" id="scope-primary-detail">Run a Scope profile capture to load channel statistics.</p>
               </aside>
               <div class="scope-grid">
-                <div class="empty-preview" id="empty-preview">
-                  <div class="reticle"></div>
-                  <strong>No capture loaded</strong>
-                  <span>Run a bounded window to populate the evidence plane.</span>
-                </div>
-                <img id="overview" class="overview hidden" alt="Latest CAN-H and CAN-L waveform overview">
+                <div class="empty-preview" id="scope-empty-preview"><div class="reticle"></div><strong>No Scope capture loaded</strong><span>Network captures stay on the CAN page.</span></div>
+                <img id="scope-overview" class="overview hidden" alt="Latest configurable Scope waveform overview">
               </div>
             </div>
           </section>
@@ -155,25 +199,25 @@
 
       <section class="tab-panel" id="panel-serial" role="tabpanel" aria-labelledby="tab-serial" data-panel="serial" hidden>
         <section class="panel commissioned-panel">
-          <div class="panel-heading">
-            <div><span class="section-number">03</span><h2>Serial acquisition</h2></div>
-            <span class="status-label planned">Not commissioned</span>
-          </div>
+          <div class="panel-heading"><div><span class="section-number">03</span><h2>Serial acquisition</h2></div><span class="status-label planned">Not commissioned</span></div>
           <div class="commissioned-body">
-            <div>
-              <p class="lead">The tab is active; the serial acquisition lane is intentionally not pretending to be ready.</p>
-              <p>Raw electrical and timing evidence will use a direct isolated serial adapter or Pico lane. Structured protocol gateways remain separate satellites.</p>
-            </div>
-            <dl class="boundary-list">
-              <div><dt>Planned roles</dt><dd>SEL / RS-232 · RS-485 tap</dd></div>
-              <div><dt>Initial authority</dt><dd>Receive-only</dd></div>
-              <div><dt>Evidence target</dt><dd>Bytes · timing · framing · CRC</dd></div>
-            </dl>
+            <div><p class="lead">The tab is active; the serial acquisition lane is intentionally not pretending to be ready.</p><p>Raw electrical and timing evidence will use a direct isolated serial adapter or Pico lane. Structured protocol gateways remain separate satellites.</p></div>
+            <dl class="boundary-list"><div><dt>Planned roles</dt><dd>SEL / RS-232 · RS-485 tap</dd></div><div><dt>Initial authority</dt><dd>Receive-only</dd></div><div><dt>Evidence target</dt><dd>Bytes · timing · framing · CRC</dd></div></dl>
           </div>
         </section>
       </section>
 
       <section class="tab-panel" id="panel-can" role="tabpanel" aria-labelledby="tab-can" data-panel="can" hidden>
+        <section class="panel can-capture-panel">
+          <div class="panel-heading"><div><span class="section-number">04</span><h2>Commissioned network capture</h2></div><p>VBAT · CAN-H · CAN-L · listen-only</p></div>
+          <form id="can-capture-form" class="can-capture-form">
+            <label class="field"><span>Evidence label</span><input id="can-label" maxlength="80" value="bench CAN proof" autocomplete="off"></label>
+            <label class="field"><span>Window</span><select id="can-window"><option value="short">40 ms</option><option value="medium">200 ms</option><option value="long">500 ms</option></select></label>
+            <label class="field"><span>Source</span><select id="can-mode"><option value="auto">Auto</option><option value="simulator">Simulator</option><option value="hardware">Pico hardware</option></select></label>
+            <button class="capture-button" id="can-capture-button" type="submit"><span class="button-mark"></span>Capture network</button>
+          </form>
+          <div class="message" id="can-message" aria-live="polite">Network harness: A = VBAT through 20:1, B = CAN-H, C = CAN-L.</div>
+        </section>
         <div class="metric-grid">
           <article class="panel metric"><span>CAN-H mean</span><strong id="can-h-mean">—</strong><small>V</small></article>
           <article class="panel metric"><span>CAN-L mean</span><strong id="can-l-mean">—</strong><small>V</small></article>
@@ -182,27 +226,14 @@
           <article class="panel metric"><span>H/L correlation</span><strong id="can-correlation">—</strong><small>ratio</small></article>
         </div>
         <section class="preview panel can-preview">
-          <div class="panel-heading">
-            <div><span class="section-number">04</span><h2>CAN pair evidence</h2></div>
-            <p>Shared latest capture · listen-only</p>
-          </div>
-          <div class="scope-grid">
-            <div class="empty-preview" id="can-empty-preview">
-              <div class="reticle"></div>
-              <strong>No CAN evidence loaded</strong>
-              <span>Use Scope to acquire a bounded network capture.</span>
-            </div>
-            <img id="can-overview" class="overview hidden" alt="Latest CAN-H and CAN-L evidence waveform">
-          </div>
+          <div class="panel-heading"><div><span class="section-number">04A</span><h2>CAN pair evidence</h2></div><a id="can-latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a></div>
+          <div class="scope-grid"><div class="empty-preview" id="can-empty-preview"><div class="reticle"></div><strong>No CAN evidence loaded</strong><span>Run the commissioned network capture above.</span></div><img id="can-overview" class="overview hidden" alt="Latest CAN-H and CAN-L evidence waveform"></div>
         </section>
       </section>
 
       <section class="tab-panel" id="panel-tests" role="tabpanel" aria-labelledby="tab-tests" data-panel="tests" hidden>
         <section class="panel commissioned-panel">
-          <div class="panel-heading">
-            <div><span class="section-number">05</span><h2>Guided tests</h2></div>
-            <span class="status-label planned">Framework ready</span>
-          </div>
+          <div class="panel-heading"><div><span class="section-number">05</span><h2>Guided tests</h2></div><span class="status-label planned">Framework ready</span></div>
           <div class="test-grid">
             <article><strong>Relative compression</strong><span>Connection → signal check → bounded capture → calculation → findings</span><small>Not commissioned</small></article>
             <article><strong>Cylinder contribution</strong><span>Shared capture engines with explicit stimulus authority</span><small>Not commissioned</small></article>
@@ -213,31 +244,16 @@
       </section>
 
       <section class="tab-panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" data-panel="timeline" hidden>
-        <section class="panel">
-          <div class="panel-heading">
-            <div><span class="section-number">06</span><h2>Capture timeline</h2></div>
-            <p>Newest first · shared evidence state</p>
-          </div>
-          <div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div>
-        </section>
+        <section class="panel"><div class="panel-heading"><div><span class="section-number">06</span><h2>Capture timeline</h2></div><p>Newest first · shared evidence state</p></div><div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div></section>
       </section>
 
       <section class="tab-panel" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence" data-panel="evidence" hidden>
-        <section class="runs panel">
-          <div class="panel-heading">
-            <div><span class="section-number">07</span><h2>Field Journal</h2></div>
-            <button id="refresh" class="plain-button" type="button">Refresh</button>
-          </div>
-          <div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div>
-        </section>
+        <section class="runs panel"><div class="panel-heading"><div><span class="section-number">07</span><h2>Field Journal</h2></div><button id="refresh" class="plain-button" type="button">Refresh</button></div><div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div></section>
       </section>
     </main>
 
-    <footer>
-      <span>Remote Dan Lite · synchronized evidence appliance</span>
-      <span>Capture / routing / recovery remain separate failure domains</span>
-    </footer>
+    <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
-  <script src="/static/app.js?v=scope-gauge-1" defer></script>
+  <script src="/static/app.js?v=scope-workspace-2" defer></script>
 </body>
 </html>

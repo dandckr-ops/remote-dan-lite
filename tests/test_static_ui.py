@@ -73,12 +73,21 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
     parser = parse_console()
 
     required_ids = {
-        "capture-form",
+        "scope-capture-form",
+        "scope-profile",
+        "scope-window",
+        "scope-autoscale",
+        "scope-apply-20x",
+        "scope-reset-profile",
+        "scope-primary-label",
+        "scope-primary-value",
+        "scope-primary-detail",
+        "scope-overview",
+        "can-capture-form",
+        "can-capture-button",
+        "can-message",
         "vbat-value",
         "vbat-detail",
-        "scope-vbat-value",
-        "scope-vbat-detail",
-        "overview",
         "can-overview",
         "timeline-list",
         "run-list",
@@ -86,8 +95,23 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
     assert required_ids <= parser.ids
 
     index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    assert index.count("data-vbat-value") == 2
-    assert index.count("data-vbat-detail") == 2
+    assert index.count("data-vbat-value") == 1
+    assert index.count("data-vbat-detail") == 1
+    assert index.count("data-scope-profile=") == 5
+    assert index.count("data-scope-channel=") == 4
+    for value in (
+        "secondary-ignition",
+        "crankshaft-vr",
+        "crankshaft-hall",
+        "injector-primary",
+        "1s",
+        "2s",
+        "5s",
+        "10s",
+        "Auto-scale ranges",
+        "20:1 on enabled",
+    ):
+        assert value in index
 
 
 def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() -> None:
@@ -103,5 +127,11 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert "history.replaceState" in script
     assert "function formatVoltage" in script
     assert ".toFixed(2)" in script
-    assert '$$("[data-vbat-value]")' in script
-    assert '$$("[data-vbat-detail]")' in script
+    assert '$("[data-vbat-value]")' in script
+    assert '$("[data-vbat-detail]")' in script
+    assert "function applyScopeProfile" in script
+    assert "function collectScopeChannels" in script
+    assert "function suggestScopeRange" in script
+    assert "function bindScopeCaptureForm" in script
+    assert "function bindCanCaptureForm" in script
+    assert 'profile: "network"' in script

@@ -36,7 +36,8 @@ def test_index_is_traceworks_capture_console(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "Traceworks" in response.text
-    assert "Capture window" in response.text
+    assert "Scope setup" in response.text
+    assert "Commissioned network capture" in response.text
     assert "Field Journal" in response.text
 
 

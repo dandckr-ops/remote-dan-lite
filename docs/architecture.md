@@ -16,8 +16,9 @@ At the current repository baseline:
 
 - Pi 5 + PicoScope 2406B network capture is **proven**.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
-- SQLite metadata and evidence lineage are **in governed source**.
-- Seven session-centered tabs are **implemented in governed source** and share one capture state; Serial and guided-test acquisition remain commissioning boundaries.
+- SQLite metadata and evidence lineage are **proven live**.
+- Seven session-centered tabs are **proven live** and share one evidence state; Serial and guided-test acquisition remain commissioning boundaries.
+- Profile-driven Scope acquisition is **hardware-preflight proven** on the real 2406B, including a 10-second capture and model-accepted ranges from ±20 mV through ±20 V.
 - The Anybus AB7702 is a **connected satellite**; Remote Dan integration is pending.
 - The complete three-device enclosure and independent recovery hardware remain an architecture target.
 
@@ -79,7 +80,7 @@ It should remain simpler than the capture node and should not depend on the capt
 The implemented primary tabs are:
 
 1. **Overview** — hardware readiness, supply voltage, synchronization, storage, capture state, and recent sessions
-2. **Scope** — general waveform acquisition and review
+2. **Scope** — profile-driven physical-signal acquisition with four configurable channels
 3. **Serial** — raw serial configuration, capture, and decode evidence
 4. **CAN** — listen-only acquisition, bus measurements, and decode evidence
 5. **Tests** — guided workflows that configure the shared acquisition engines
@@ -89,6 +90,18 @@ The implemented primary tabs are:
 Connections and System remain secondary setup areas.
 
 A tab is a view or configuration surface over the same session. It must not duplicate the scope, CAN, serial, or evidence implementation.
+
+### Scope versus CAN
+
+Scope and CAN deliberately use the same capture/evidence engine but expose different operator contracts:
+
+- **Scope** owns physical-signal profiles, A–D channel enable state and labels, AC/DC coupling, input range, probe ratio, collection window, waveform review, and bounded next-capture auto-range suggestions.
+- **CAN** owns the commissioned fixed harness: Channel A VBAT through 20:1, Channel B CAN-H, Channel C CAN-L, bus-derived measurements, and listen-only network evidence.
+- Scope and CAN retain independent “latest capture” views so one lane does not overwrite the other operator context.
+
+Current Scope starting profiles are General/custom, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary. Secondary ignition is pickup-only: the scope, BNC, and ground lead must never connect directly to secondary voltage.
+
+The live 2406B was probed rather than trusting the SDK enum. This unit accepts ±20 mV, ±50 mV, ±100 mV, ±200 mV, ±500 mV, ±1 V, ±2 V, ±5 V, ±10 V, and ±20 V. It rejects the SDK's ±10 mV and ±50 V enum values. With a selected 20:1 attenuator, the maximum displayed full scale is therefore ±400 V; the physical accessory rating still governs.
 
 ### Guided tests
 
