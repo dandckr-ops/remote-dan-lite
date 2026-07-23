@@ -14,6 +14,23 @@ const state = {
     routes: {},
   },
   canDecode: null,
+  obd: {
+    subtab: "live-data",
+    status: null,
+    liveData: null,
+    faults: null,
+    vehicleInfo: null,
+    customers: [],
+    vehicles: [],
+    sessions: [],
+    pollTimer: null,
+    liveRequest: null,
+    statusEpoch: 0,
+    faultsEpoch: 0,
+    vehicleEpoch: 0,
+    savePending: false,
+    saveOperationIds: {},
+  },
 };
 const canDecodeRequestGate = CanRequestGate.createLatestRequestGate();
 
@@ -33,6 +50,15 @@ function activateTab(name, {updateHash = true, focus = false} = {}) {
   panels.forEach((panel) => {
     panel.hidden = panel.dataset.panel !== selectedName;
   });
+  if (selectedName === "obd") {
+    const selectedTab = tabs.find((tab) => tab.dataset.tab === "obd");
+    selectedTab?.scrollIntoView({block: "nearest", inline: "nearest"});
+    refreshObdStatus();
+    loadObdRecords();
+    scheduleObdLivePoll();
+  } else {
+    stopObdLivePoll();
+  }
   if (updateHash) {
     history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${selectedName}`);
   }
@@ -103,7 +129,16 @@ function formatRange(value) {
 async function getJson(url, options = {}) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const detail = Array.isArray(payload.detail)
+      ? payload.detail.map((item) => item.msg || JSON.stringify(item)).join("; ")
+      : typeof payload.detail === "object" && payload.detail !== null
+        ? JSON.stringify(payload.detail)
+        : payload.detail;
+    const error = new Error(detail || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -549,6 +584,10 @@ function bindBusSurveyForm() {
 
 function isModbusRun(run) {
   return run?.capture_type === "modbus_scan" || run?.profile === "modbus";
+}
+
+function isObdRun(run) {
+  return run?.capture_type === "obd_scan" || run?.profile === "obd";
 }
 
 function showModbus(run) {
@@ -1009,7 +1048,7 @@ function renderRuns(runs) {
     backend.className = (run.backend || "").includes("simulator") ? "sim" : "hardware";
     backend.textContent = (run.backend || "unknown").toUpperCase();
     const window = document.createElement("span");
-    const sampleUnit = isSerialRun(run) ? "BYTES" : (isModbusRun(run) ? "HOSTS" : "SAMPLES");
+    const sampleUnit = isSerialRun(run) ? "BYTES" : (isModbusRun(run) ? "HOSTS" : (isObdRun(run) ? "OBSERVATIONS" : "SAMPLES"));
     window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${sampleUnit}`;
     const links = document.createElement("div");
     links.className = "artifact-links";
@@ -1018,6 +1057,11 @@ function renderRuns(runs) {
         artifactLink(run, "frames.jsonl", "FRAMES"),
         artifactLink(run, "identifiers.csv", "IDENTIFIERS"),
         artifactLink(run, "summary.json", "JSON"),
+      );
+    } else if (isObdRun(run)) {
+      links.append(
+        artifactLink(run, "obd-snapshot.json", "OBD JSON"),
+        artifactLink(run, "manifest.json", "MANIFEST"),
       );
     } else if (isBusSurveyRun(run)) {
       links.append(
@@ -1239,7 +1283,456 @@ function bindModbusScanForm() {
   });
 }
 
+const obdTabs = $$('[role="tab"][data-obd-tab]');
+const obdPanels = $$('[role="tabpanel"][data-obd-panel]');
+const obdTabNames = obdTabs.map((tab) => tab.dataset.obdTab);
+
+function activateObdTab(name, {focus = false} = {}) {
+  const selected = obdTabNames.includes(name) ? name : "live-data";
+  state.obd.subtab = selected;
+  obdTabs.forEach((tab) => {
+    const active = tab.dataset.obdTab === selected;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    if (active && focus) tab.focus();
+  });
+  obdPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.obdPanel !== selected;
+  });
+  if (selected === "live-data") scheduleObdLivePoll();
+  else stopObdLivePoll();
+}
+
+function bindObdTabs() {
+  obdTabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => activateObdTab(tab.dataset.obdTab));
+    tab.addEventListener("keydown", (event) => {
+      let nextIndex = null;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % obdTabs.length;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + obdTabs.length) % obdTabs.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = obdTabs.length - 1;
+      if (nextIndex === null) return;
+      event.preventDefault();
+      activateObdTab(obdTabs[nextIndex].dataset.obdTab, {focus: true});
+    });
+  });
+}
+
+function clearObdReadings(reason = "Disconnected. Previous readings are no longer current.") {
+  state.obd.faultsEpoch += 1;
+  state.obd.vehicleEpoch += 1;
+  state.obd.saveOperationIds = {};
+  state.obd.liveData = null;
+  state.obd.faults = null;
+  state.obd.vehicleInfo = null;
+  const liveEmpty = document.createElement("p");
+  liveEmpty.className = "empty-list";
+  liveEmpty.textContent = "No current live values.";
+  $("#obd-live-list").replaceChildren(liveEmpty);
+  $("#obd-live-updated").textContent = "Last update: —";
+  setMessage("#obd-live-message", reason);
+  renderDtcList("#obd-stored-list", "#obd-stored-count", [], "No current stored DTC snapshot.");
+  renderDtcList("#obd-pending-list", "#obd-pending-count", [], "No current pending DTC snapshot.");
+  renderDtcList("#obd-permanent-list", "#obd-permanent-count", [], "No current permanent DTC snapshot.");
+  const readinessEmpty = document.createElement("p");
+  readinessEmpty.className = "empty-list";
+  readinessEmpty.textContent = "No current readiness response.";
+  $("#obd-readiness-list").replaceChildren(readinessEmpty);
+  setMessage("#obd-fault-message", reason);
+  $("#obd-vin").textContent = "—";
+  $("#obd-vin-ecu").textContent = "—";
+  $("#obd-vehicle-protocol").textContent = "—";
+  $("#obd-adapter-identity").textContent = "—";
+  $("#obd-ecu-list").textContent = "—";
+  setMessage("#obd-vehicle-message", reason);
+}
+
+function renderObdStatus(status) {
+  state.obd.status = status;
+  const connected = Boolean(status.connected);
+  if (!connected) {
+    stopObdLivePoll();
+    clearObdReadings();
+  }
+  $("#obd-connection-status").textContent = connected ? "Connected" : "Disconnected";
+  $("#obd-connection-status").className = `status-label ${connected ? "live" : "planned"}`;
+  $("#obd-provider").textContent = status.provider || "—";
+  $("#obd-protocol").textContent = status.protocol || "—";
+  $("#obd-ecu-summary").textContent = (status.responder_ids || []).join(", ") || "—";
+  $("#obd-voltage").textContent = Number.isFinite(Number(status.voltage)) ? `${formatMetric(status.voltage, 1)} V` : "—";
+  $("#obd-connect-button").disabled = connected;
+  $("#obd-disconnect-button").disabled = !connected;
+  $("#obd-provider-mode").disabled = connected;
+  $("#obd-session-select").disabled = connected;
+  if (status.session_id) $("#obd-session-select").value = String(status.session_id);
+  const canRead = connected;
+  const canSave = connected && Boolean(status.session_id) && !state.obd.savePending;
+  $("#obd-live-save-button").disabled = !canSave;
+  $("#obd-fault-refresh-button").disabled = !canRead;
+  $("#obd-fault-save-button").disabled = !canSave;
+  $("#obd-vehicle-refresh-button").disabled = !canRead;
+  $("#obd-vehicle-save-button").disabled = !canSave;
+  setMessage("#obd-message", connected
+    ? `${status.adapter_identity || status.provider} · ${status.protocol}`
+    : "Select a session for durable evidence, then connect.", connected ? "success" : "");
+}
+
+async function refreshObdStatus({schedule = true} = {}) {
+  const epoch = ++state.obd.statusEpoch;
+  try {
+    const status = await getJson("/api/obd/status");
+    if (epoch !== state.obd.statusEpoch) return null;
+    renderObdStatus(status);
+    if (schedule) scheduleObdLivePoll();
+    return status;
+  } catch (error) {
+    if (epoch === state.obd.statusEpoch) {
+      setMessage("#obd-message", `OBD status unavailable: ${error.message}`, "error");
+    }
+    return null;
+  }
+}
+
+function renderObdLiveData(payload) {
+  state.obd.liveData = payload;
+  const list = $("#obd-live-list");
+  const values = payload.values || [];
+  if (!values.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No supported live values returned.";
+    list.replaceChildren(empty);
+  } else {
+    list.replaceChildren(...values.map((item) => {
+      const card = document.createElement("article");
+      card.className = `obd-live-card ${item.fresh === false ? "stale" : "fresh"}`;
+      card.setAttribute("role", "listitem");
+      const label = document.createElement("span");
+      const value = document.createElement("strong");
+      const detail = document.createElement("small");
+      label.textContent = `${item.pid} · ${item.name}`;
+      const numeric = Number(item.value);
+      value.textContent = `${Number.isFinite(numeric) ? formatMetric(numeric, Math.abs(numeric) < 10 ? 2 : 1) : "—"} ${item.unit || ""}`.trim();
+      detail.textContent = `${item.ecu || "ECU ?"} · ${item.fresh === false ? "Stale" : "Fresh"}`;
+      card.append(label, value, detail);
+      return card;
+    }));
+  }
+  $("#obd-live-updated").textContent = `Last update: ${formatTimestamp(payload.sampled_at)}`;
+  setMessage("#obd-live-message", payload.errors?.length
+    ? `${values.length} values · ${payload.errors.length} communication/decode errors`
+    : `${values.length} supported values · no reported errors`, payload.errors?.length ? "error" : "success");
+}
+
+function stopObdLivePoll() {
+  if (state.obd.pollTimer !== null) {
+    window.clearTimeout(state.obd.pollTimer);
+    state.obd.pollTimer = null;
+  }
+  if (state.obd.liveRequest) {
+    state.obd.liveRequest.abort();
+    state.obd.liveRequest = null;
+  }
+}
+
+function scheduleObdLivePoll(delayOverride = null) {
+  const topLevelActive = !$("#panel-obd").hidden;
+  if (!topLevelActive || state.obd.subtab !== "live-data" || !state.obd.status?.connected) return;
+  if (state.obd.pollTimer !== null || state.obd.liveRequest) return;
+  const delay = delayOverride ?? (state.obd.liveData ? 1200 : 0);
+  state.obd.pollTimer = window.setTimeout(async () => {
+    state.obd.pollTimer = null;
+    const controller = new AbortController();
+    const epoch = state.obd.statusEpoch;
+    state.obd.liveRequest = controller;
+    let nextDelay = null;
+    try {
+      const payload = await getJson("/api/obd/live", {signal: controller.signal});
+      if (epoch === state.obd.statusEpoch && state.obd.status?.connected) {
+        renderObdLiveData(payload);
+        nextDelay = !(payload.values || []).length && (payload.errors || []).length ? 5000 : 1200;
+      }
+    } catch (error) {
+      if (error.name !== "AbortError" && epoch === state.obd.statusEpoch) {
+        nextDelay = 5000;
+        setMessage("#obd-live-message", `Live read failed: ${error.message}`, "error");
+        const refreshed = await refreshObdStatus({schedule: false});
+        if (refreshed && !refreshed.connected) nextDelay = null;
+      }
+    } finally {
+      if (state.obd.liveRequest === controller) state.obd.liveRequest = null;
+      const recoveryDelay = nextDelay ?? (state.obd.status?.connected ? 1200 : null);
+      if (!controller.signal.aborted && recoveryDelay !== null) scheduleObdLivePoll(recoveryDelay);
+    }
+  }, delay);
+}
+
+function renderDtcList(selector, countSelector, items, emptyText) {
+  $(countSelector).textContent = String(items.length);
+  const list = $(selector);
+  if (!items.length) {
+    const item = document.createElement("li");
+    item.textContent = emptyText;
+    list.replaceChildren(item);
+    return;
+  }
+  list.replaceChildren(...items.map((dtc) => {
+    const item = document.createElement("li");
+    const code = document.createElement("strong");
+    const description = document.createElement("span");
+    const ecu = document.createElement("small");
+    code.textContent = dtc.code;
+    description.textContent = dtc.description || "Description unavailable";
+    ecu.textContent = `Source ${dtc.ecu || "unknown"}`;
+    item.append(code, description, ecu);
+    return item;
+  }));
+}
+
+function renderObdFaults(payload) {
+  state.obd.faults = payload;
+  renderDtcList("#obd-stored-list", "#obd-stored-count", payload.stored || [], payload.stored_status === "error" ? "Stored-code service failed." : "No stored DTCs returned.");
+  renderDtcList("#obd-pending-list", "#obd-pending-count", payload.pending || [], payload.pending_status === "error" ? "Pending-code service failed." : "No pending DTCs returned.");
+  renderDtcList("#obd-permanent-list", "#obd-permanent-count", payload.permanent || [], payload.permanent_status === "error" ? "Permanent-code service failed." : payload.permanent_status === "no_data" ? "Permanent-code service returned no data." : "No permanent DTCs returned.");
+  const readiness = payload.readiness || [];
+  const readinessList = $("#obd-readiness-list");
+  if (!readiness.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No readiness response returned.";
+    readinessList.replaceChildren(empty);
+  } else {
+    readinessList.replaceChildren(...readiness.map((item) => {
+      const card = document.createElement("article");
+      const heading = document.createElement("strong");
+      const detail = document.createElement("span");
+      heading.textContent = `${item.ecu} · MIL ${item.mil_on ? "ON" : "OFF"} · ${item.dtc_count} stored`;
+      detail.textContent = item.incomplete?.length ? `Incomplete: ${item.incomplete.join(", ")}` : "All supported monitors complete";
+      card.append(heading, detail);
+      return card;
+    }));
+  }
+  const total = (payload.stored?.length || 0) + (payload.pending?.length || 0) + (payload.permanent?.length || 0);
+  const failedDtcStates = ["stored", "pending", "permanent"].filter((stateName) => payload[`${stateName}_status`] === "error");
+  const errorCount = (payload.errors || []).length;
+  if (failedDtcStates.length === 3) {
+    setMessage("#obd-fault-message", "All DTC service reads failed; zero counts are not valid no-code results.", "error");
+  } else if (failedDtcStates.length || errorCount) {
+    setMessage("#obd-fault-message", `${total} DTC observations read with ${errorCount} communication/decode errors.`, "error");
+  } else {
+    setMessage("#obd-fault-message", `${total} DTC observations read at ${formatTimestamp(payload.observed_at)}.`, "success");
+  }
+}
+
+async function readObdFaults() {
+  const epoch = state.obd.statusEpoch;
+  const requestEpoch = ++state.obd.faultsEpoch;
+  try {
+    setMessage("#obd-fault-message", "Reading readiness and stored, pending, and permanent DTCs…");
+    const payload = await getJson("/api/obd/faults");
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.faultsEpoch && state.obd.status?.connected) renderObdFaults(payload);
+  } catch (error) {
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.faultsEpoch) setMessage("#obd-fault-message", `Fault read failed: ${error.message}`, "error");
+  }
+}
+
+function renderObdVehicleInfo(payload) {
+  state.obd.vehicleInfo = payload;
+  const first = payload.vins?.[0];
+  $("#obd-vin").textContent = first?.vin || "Not reported";
+  $("#obd-vin-ecu").textContent = first?.ecu || "—";
+  $("#obd-vehicle-protocol").textContent = payload.protocol || "—";
+  $("#obd-adapter-identity").textContent = payload.adapter_identity || "—";
+  $("#obd-ecu-list").textContent = (payload.responder_ids || []).join(", ") || "—";
+  setMessage("#obd-vehicle-message", payload.vin_mismatch
+    ? "Warning: different ECUs reported different VINs. No VIN was selected silently."
+    : first ? `VIN read from ${first.ecu}.` : "No VIN returned by Mode $09.", payload.vin_mismatch ? "error" : "success");
+}
+
+async function readObdVehicleInfo() {
+  const epoch = state.obd.statusEpoch;
+  const requestEpoch = ++state.obd.vehicleEpoch;
+  try {
+    setMessage("#obd-vehicle-message", "Reading Mode $09 vehicle information…");
+    const payload = await getJson("/api/obd/vehicle-info");
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.vehicleEpoch && state.obd.status?.connected) renderObdVehicleInfo(payload);
+  } catch (error) {
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.vehicleEpoch) setMessage("#obd-vehicle-message", `Vehicle-info read failed: ${error.message}`, "error");
+  }
+}
+
+function createOperationId() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  if (typeof cryptoApi?.getRandomValues !== "function") {
+    throw new Error("This browser cannot generate a secure evidence operation ID.");
+  }
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
+async function saveObdSnapshot(kind, label, messageSelector) {
+  if (state.obd.savePending) return;
+  state.obd.savePending = true;
+  if (state.obd.status) renderObdStatus(state.obd.status);
+  try {
+    const operationId = state.obd.saveOperationIds[kind] || createOperationId();
+    state.obd.saveOperationIds[kind] = operationId;
+    const run = await getJson("/api/obd/snapshots", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind, label, operation_id: operationId}),
+    });
+    delete state.obd.saveOperationIds[kind];
+    setMessage(messageSelector, `${run.run_id} saved with hashed JSON and manifest artifacts.`, "success");
+    await refreshRuns();
+    await loadObdRecords();
+  } catch (error) {
+    setMessage(messageSelector, `Evidence save failed: ${error.message}`, "error");
+  } finally {
+    state.obd.savePending = false;
+    if (state.obd.status) renderObdStatus(state.obd.status);
+  }
+}
+
+function option(value, label) {
+  const item = document.createElement("option");
+  item.value = String(value);
+  item.textContent = label;
+  return item;
+}
+
+function renderObdRecords() {
+  const sessionSelect = $("#obd-session-select");
+  const selected = sessionSelect.value || (state.obd.status?.session_id ? String(state.obd.status.session_id) : "");
+  sessionSelect.replaceChildren(option("", "No session selected"), ...state.obd.sessions.map((item) => option(item.session_id, `#${item.session_id} · ${item.vehicle?.display_name || "Unassigned vehicle"} · ${item.customer?.name || "Unassigned customer"}`)));
+  if (selected && state.obd.sessions.some((item) => String(item.session_id) === selected)) sessionSelect.value = selected;
+  $("#obd-session-customer").replaceChildren(option("", "Select customer"), ...state.obd.customers.map((item) => option(item.id, item.company ? `${item.name} · ${item.company}` : item.name)));
+  $("#obd-session-vehicle").replaceChildren(option("", "Select vehicle"), ...state.obd.vehicles.map((item) => option(item.id, item.vin ? `${item.display_name} · ${item.vin}` : item.display_name)));
+  const list = $("#obd-record-list");
+  if (!state.obd.sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No diagnostic sessions stored.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...state.obd.sessions.map((item) => {
+    const card = document.createElement("article");
+    const title = document.createElement("strong");
+    const detail = document.createElement("span");
+    const metadata = document.createElement("small");
+    const use = document.createElement("button");
+    title.textContent = `#${item.session_id} · ${item.case?.title || item.purpose}`;
+    detail.textContent = `${item.customer?.name || "Unassigned"} · ${item.vehicle?.display_name || "Unassigned vehicle"}`;
+    metadata.textContent = `${item.status} · ${formatTimestamp(item.started_at)}`;
+    use.type = "button";
+    use.className = "plain-button";
+    use.textContent = "Select";
+    use.disabled = Boolean(state.obd.status?.connected);
+    use.addEventListener("click", () => {
+      $("#obd-session-select").value = String(item.session_id);
+      setMessage("#obd-record-message", `Session #${item.session_id} selected for the next OBD connection.`, "success");
+    });
+    card.append(title, detail, metadata, use);
+    return card;
+  }));
+}
+
+async function loadObdRecords() {
+  try {
+    const [customers, vehicles, sessions] = await Promise.all([
+      getJson("/api/customers"), getJson("/api/vehicles"), getJson("/api/diagnostic-sessions"),
+    ]);
+    state.obd.customers = customers;
+    state.obd.vehicles = vehicles;
+    state.obd.sessions = sessions;
+    renderObdRecords();
+  } catch (error) {
+    setMessage("#obd-record-message", `Could not load records: ${error.message}`, "error");
+  }
+}
+
+function bindObdControls() {
+  $("#obd-connect-button").addEventListener("click", async () => {
+    const button = $("#obd-connect-button");
+    const epoch = ++state.obd.statusEpoch;
+    button.disabled = true;
+    setMessage("#obd-message", "Connecting and discovering supported PIDs…");
+    try {
+      const sessionValue = $("#obd-session-select").value;
+      const status = await getJson("/api/obd/connect", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode: $("#obd-provider-mode").value, session_id: sessionValue ? Number(sessionValue) : null}),
+      });
+      if (epoch !== state.obd.statusEpoch) return;
+      renderObdStatus(status);
+      scheduleObdLivePoll();
+    } catch (error) {
+      if (epoch === state.obd.statusEpoch) {
+        renderObdStatus({connected: false, responder_ids: []});
+        setMessage("#obd-message", `Connection failed: ${error.message}`, "error");
+        button.disabled = false;
+      }
+    }
+  });
+  $("#obd-disconnect-button").addEventListener("click", async () => {
+    const epoch = ++state.obd.statusEpoch;
+    stopObdLivePoll();
+    try {
+      const status = await getJson("/api/obd/disconnect", {method: "POST"});
+      if (epoch === state.obd.statusEpoch) renderObdStatus(status);
+    } catch (error) {
+      if (epoch === state.obd.statusEpoch) {
+        renderObdStatus({connected: false, responder_ids: []});
+        setMessage("#obd-message", `Disconnected with cleanup error: ${error.message}`, "error");
+      }
+    }
+  });
+  $("#obd-fault-refresh-button").addEventListener("click", readObdFaults);
+  $("#obd-fault-save-button").addEventListener("click", () => saveObdSnapshot("faults", "OBD fault and readiness snapshot", "#obd-fault-message"));
+  $("#obd-vehicle-refresh-button").addEventListener("click", readObdVehicleInfo);
+  $("#obd-vehicle-save-button").addEventListener("click", () => saveObdSnapshot("vehicle_info", "OBD vehicle information", "#obd-vehicle-message"));
+  $("#obd-live-save-button").addEventListener("click", () => saveObdSnapshot("live", "OBD live-data snapshot", "#obd-live-message"));
+  $("#obd-record-refresh-button").addEventListener("click", loadObdRecords);
+
+  $("#obd-customer-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await getJson("/api/customers", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: $("#obd-customer-name").value, company: $("#obd-customer-company").value || null, phone: $("#obd-customer-phone").value || null, email: $("#obd-customer-email").value || null})});
+      event.currentTarget.reset();
+      setMessage("#obd-record-message", "Customer created.", "success");
+      await loadObdRecords();
+    } catch (error) { setMessage("#obd-record-message", `Customer creation failed: ${error.message}`, "error"); }
+  });
+  $("#obd-vehicle-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await getJson("/api/vehicles", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({display_name: $("#obd-vehicle-name").value, vin: $("#obd-vehicle-vin").value || null, make: $("#obd-vehicle-make").value || null, model: $("#obd-vehicle-model").value || null, year: $("#obd-vehicle-year").value ? Number($("#obd-vehicle-year").value) : null})});
+      event.currentTarget.reset();
+      setMessage("#obd-record-message", "Vehicle created.", "success");
+      await loadObdRecords();
+    } catch (error) { setMessage("#obd-record-message", `Vehicle creation failed: ${error.message}`, "error"); }
+  });
+  $("#obd-session-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const created = await getJson("/api/diagnostic-sessions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({customer_id: Number($("#obd-session-customer").value), vehicle_id: Number($("#obd-session-vehicle").value), title: $("#obd-session-title").value, purpose: $("#obd-session-purpose").value})});
+      await loadObdRecords();
+      $("#obd-session-select").value = String(created.session_id);
+      setMessage("#obd-record-message", `Diagnostic session #${created.session_id} created and selected.`, "success");
+    } catch (error) { setMessage("#obd-record-message", `Session creation failed: ${error.message}`, "error"); }
+  });
+}
+
 bindTabs();
+bindObdTabs();
+bindObdControls();
 bindScopeControls();
 bindScopeCaptureForm();
 bindBusSurveyForm();

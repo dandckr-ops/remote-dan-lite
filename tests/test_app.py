@@ -5,6 +5,8 @@ import copy
 from pathlib import Path
 import json
 import shutil
+import sqlite3
+import threading
 
 from fastapi.testclient import TestClient
 import pytest
@@ -14,6 +16,7 @@ from remote_dan.app import create_app
 from remote_dan.can_analysis import aggregate_can_identifiers
 from remote_dan.capture import SimulatorBackend
 from remote_dan.modbus_scan import ModbusSimulatorBackend
+from remote_dan.obd_provider import SimulatorOBDProvider
 
 
 class FakePicoBackend(SimulatorBackend):
@@ -76,6 +79,18 @@ def _register_authoritative_can_parent(
         "source_parent_samples": samples,
         "source_samples": samples,
     }
+
+
+class AdapterFailingLiveProvider(SimulatorOBDProvider):
+    def query(self, command: str) -> str:
+        canonical = command.replace(" ", "").upper()
+        if canonical.startswith("01") and canonical not in {"0100", "0120", "0140", "0160", "0180", "01A0"}:
+            return "BUS ERROR\r>"
+        return super().query(canonical)
+
+
+class FakeHardwareOBDProvider(SimulatorOBDProvider):
+    name = "obdlink-sx"
 
 
 def test_status_reports_degraded_hardware_and_available_simulator(tmp_path: Path) -> None:
@@ -178,6 +193,62 @@ def test_usb_routing_apply_requires_explicit_confirmation_and_uses_helper(tmp_pa
     assert routing.requests == [{
         "action": "apply", "inventory_revision": "a" * 64, "routes": request["routes"],
     }]
+
+
+def test_usb_routing_apply_is_blocked_while_hardware_obd_owns_adapter(tmp_path: Path) -> None:
+    routing = FakeRoutingClient()
+    provider = FakeHardwareOBDProvider()
+    app = create_app(
+        data_dir=tmp_path,
+        routing_client=routing,
+        obd_hardware_provider_factory=lambda: provider,
+    )
+    client = TestClient(app)
+    assert client.post("/api/obd/connect", json={"mode": "hardware"}).status_code == 201
+
+    applied = client.post(
+        "/api/usb/routing/apply",
+        json={
+            "inventory_revision": "a" * 64,
+            "routes": {"usb:0403:6015:obdlink:1-1": "virtualhere"},
+            "confirmed": True,
+        },
+    )
+
+    assert applied.status_code == 409
+    assert "OBD" in applied.json()["detail"]
+    assert routing.requests == []
+
+
+def test_hardware_obd_connect_waits_for_usb_routing_critical_section(tmp_path: Path) -> None:
+    provider = FakeHardwareOBDProvider()
+    app = create_app(
+        data_dir=tmp_path,
+        routing_client=FakeRoutingClient(),
+        obd_hardware_provider_factory=lambda: provider,
+    )
+    client = TestClient(app)
+    completed = threading.Event()
+    result: list[int] = []
+    lock = app.state.usb_routing_obd_lock
+    lock.acquire()
+
+    def connect() -> None:
+        response = client.post("/api/obd/connect", json={"mode": "hardware"})
+        result.append(response.status_code)
+        completed.set()
+
+    worker = threading.Thread(target=connect)
+    worker.start()
+    try:
+        assert completed.wait(0.05) is False
+        assert provider.connected is False
+    finally:
+        lock.release()
+    worker.join(timeout=2)
+
+    assert completed.is_set()
+    assert result == [201]
 
 
 def test_index_is_traceworks_capture_console(tmp_path: Path) -> None:
@@ -1233,7 +1304,7 @@ def test_api_creates_and_lists_customer_vehicle_and_diagnostic_session(
         "/api/vehicles",
         json={
             "display_name": "2009 Subaru Forester",
-            "vin": "JF2SH63689G000002",
+            "vin": "RDLTEST0000000003",
             "make": "Subaru",
             "model": "Forester",
             "year": 2009,
@@ -1255,11 +1326,71 @@ def test_api_creates_and_lists_customer_vehicle_and_diagnostic_session(
     assert vehicle.status_code == 201
     assert session.status_code == 201
     assert client.get("/api/customers").json()[0]["name"] == "Example Customer"
-    assert client.get("/api/vehicles").json()[0]["vin"] == "JF2SH63689G000002"
+    assert client.get("/api/vehicles").json()[0]["vin"] == "RDLTEST0000000003"
     listed_sessions = client.get("/api/diagnostic-sessions").json()
     assert listed_sessions[0]["session_id"] == session.json()["session_id"]
     assert listed_sessions[0]["customer"]["name"] == "Example Customer"
     assert listed_sessions[0]["vehicle"]["display_name"] == "2009 Subaru Forester"
+
+
+def test_api_rejects_whitespace_only_customer_name(tmp_path: Path) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/customers", json={"name": "   "})
+
+    assert response.status_code == 422
+    assert "customer name is required" in response.text
+
+
+def test_api_rejects_whitespace_only_vehicle_name_as_validation_error(tmp_path: Path) -> None:
+    app = create_app(data_dir=tmp_path / "captures", db_path=tmp_path / "db.sqlite3")
+
+    response = TestClient(app).post("/api/vehicles", json={"display_name": "   "})
+
+    assert response.status_code == 422
+    assert "vehicle display name is required" in response.text
+
+
+def test_artifact_mount_does_not_serve_partial_or_quarantined_evidence(tmp_path: Path) -> None:
+    captures = tmp_path / "captures"
+    client = TestClient(create_app(data_dir=captures, db_path=tmp_path / "db.sqlite3"))
+    partial = captures / ".obd-known.partial"
+    quarantined = captures / ".orphaned-obd" / "obd-known"
+    uncommitted = captures / "obd-uncommitted"
+    partial.mkdir(parents=True)
+    quarantined.mkdir(parents=True)
+    uncommitted.mkdir(parents=True)
+    (partial / "obd-snapshot.json").write_text("partial", encoding="utf-8")
+    (quarantined / "manifest.json").write_text("orphan", encoding="utf-8")
+    (uncommitted / "manifest.json").write_text("not committed", encoding="utf-8")
+
+    assert client.get("/artifacts/.obd-known.partial/obd-snapshot.json").status_code == 404
+    assert client.get("/artifacts/.orphaned-obd/obd-known/manifest.json").status_code == 404
+    assert client.get("/artifacts/obd-uncommitted/manifest.json").status_code == 404
+
+
+def test_app_shutdown_closes_active_obd_connection(tmp_path: Path) -> None:
+    db_path = tmp_path / "evidence.sqlite3"
+    app = create_app(data_dir=tmp_path / "captures", db_path=db_path)
+
+    with TestClient(app) as client:
+        connected = client.post(
+            "/api/obd/connect",
+            json={"mode": "simulator", "session_id": None},
+        ).json()
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT status, ended_at FROM obd_connections WHERE id = ?",
+            (connected["connection_id"],),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "closed"
+    assert row[1] is not None
 
 
 def test_api_obd_simulator_reads_and_persists_session_artifact(
@@ -1294,7 +1425,19 @@ def test_api_obd_simulator_reads_and_persists_session_artifact(
     vehicle = client.get("/api/obd/vehicle-info")
     saved = client.post(
         "/api/obd/snapshots",
-        json={"kind": "faults", "label": "Baseline emissions scan"},
+        json={
+            "kind": "faults",
+            "label": "Baseline emissions scan",
+            "operation_id": "00000000-0000-4000-8000-000000000003",
+        },
+    )
+    saved_retry = client.post(
+        "/api/obd/snapshots",
+        json={
+            "kind": "faults",
+            "label": "Baseline emissions scan",
+            "operation_id": "00000000-0000-4000-8000-000000000003",
+        },
     )
 
     assert connected.status_code == 201
@@ -1304,9 +1447,11 @@ def test_api_obd_simulator_reads_and_persists_session_artifact(
     assert [item["code"] for item in faults.json()["stored"]] == [
         "P0102", "P0113", "P0028",
     ]
-    assert vehicle.json()["vins"][0]["vin"] == "1M8GDM9AXKP042788"
+    assert vehicle.json()["vins"][0]["vin"] == "RDLTEST1234567890"
     assert saved.status_code == 201
     manifest = saved.json()
+    assert saved_retry.status_code == 201
+    assert saved_retry.json()["run_id"] == manifest["run_id"]
     assert manifest["capture_type"] == "obd_scan"
     assert manifest["profile"] == "obd"
     assert set(manifest["artifacts"]) == {"manifest.json", "obd-snapshot.json"}
@@ -1321,7 +1466,31 @@ def test_api_obd_simulator_reads_and_persists_session_artifact(
     assert client.get(
         f"/artifacts/{manifest['run_id']}/obd-snapshot.json"
     ).status_code == 200
+    with sqlite3.connect(tmp_path / "evidence.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM captures WHERE run_id = ?",
+            (manifest["run_id"],),
+        ).fetchone()[0] == 1
     assert client.post("/api/obd/disconnect").json()["connected"] is False
+
+
+def test_api_obd_rejects_unknown_diagnostic_session_without_staying_connected(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "remote-dan.sqlite3",
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/obd/connect",
+        json={"mode": "simulator", "session_id": 999},
+    )
+
+    assert response.status_code == 422
+    assert "diagnostic session does not exist" in response.json()["detail"]
+    assert client.get("/api/obd/status").json()["connected"] is False
 
 
 def test_api_obd_clear_prepare_fails_closed_without_authenticated_operator(
@@ -1335,3 +1504,45 @@ def test_api_obd_clear_prepare_fails_closed_without_authenticated_operator(
 
     assert response.status_code == 403
     assert "authenticated operator" in response.json()["detail"]
+
+
+def test_adapter_terminal_failure_is_http_502_and_cannot_create_complete_evidence(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "db.sqlite3"
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=db_path,
+        obd_simulator_provider=AdapterFailingLiveProvider(),
+    )
+    client = TestClient(app)
+    customer_id = client.post("/api/customers", json={"name": "Bench"}).json()["id"]
+    vehicle_id = client.post("/api/vehicles", json={"display_name": "Vehicle"}).json()["id"]
+    session_id = client.post(
+        "/api/diagnostic-sessions",
+        json={
+            "customer_id": customer_id,
+            "vehicle_id": vehicle_id,
+            "title": "Adapter failure",
+            "purpose": "Regression",
+        },
+    ).json()["session_id"]
+    assert client.post(
+        "/api/obd/connect", json={"mode": "simulator", "session_id": session_id}
+    ).status_code == 201
+
+    live = client.get("/api/obd/live")
+    saved = client.post(
+        "/api/obd/snapshots",
+        json={
+            "kind": "live",
+            "label": "must fail",
+            "operation_id": "00000000-0000-4000-8000-000000000099",
+        },
+    )
+
+    assert live.status_code == 502
+    assert saved.status_code == 502
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM obd_snapshots").fetchone()[0] == 0

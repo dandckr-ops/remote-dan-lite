@@ -11,12 +11,6 @@ from uuid import uuid4
 from remote_dan.obd_protocol import OBDProtocolError, parse_elm_response
 
 
-DEFAULT_OBDLINK_PATH = (
-    "/dev/serial/by-id/"
-    "usb-ScanTool.net_LLC_OBDLink_SX_113010782033-if00-port0"
-)
-
-
 class OBDProviderError(RuntimeError):
     pass
 
@@ -134,10 +128,10 @@ class SimulatorOBDProvider:
             "0A": "NO DATA\r>",
             "0900": "7E8 06 49 00 55 00 00 00\r>",
             "0902": (
-                "7E8 10 14 49 02 01 31 4D\r"
-                "7E8 21 38 47 44 4D 39 41 58\r"
-                "7E8 22 4B 50 30 34 32 37 38\r"
-                "7E8 23 38 00 00 00 00 00 00\r>"
+                "7E8 10 14 49 02 01 52 44\r"
+                "7E8 21 4C 54 45 53 54 31 32\r"
+                "7E8 22 33 34 35 36 37 38 39\r"
+                "7E8 23 30 00 00 00 00 00 00\r>"
             ),
             "ATRV": "13.8V\r>",
         }
@@ -150,15 +144,23 @@ class ELMSerialProvider:
     def __init__(
         self,
         *,
-        stable_path: str = DEFAULT_OBDLINK_PATH,
+        stable_path: str | None = None,
         serial_factory: Callable[..., Any] | None = None,
-        lock_path: Path | str = "/var/lib/remote-dan-lite/obdlink-sx.lock",
+        lock_path: Path | str | None = None,
         command_timeout_s: float = 1.2,
         reset_timeout_s: float = 3.0,
     ) -> None:
-        self.stable_path = stable_path
+        self.stable_path = (
+            stable_path or os.environ.get("REMOTE_DAN_OBD_DEVICE", "")
+        ).strip()
         self.serial_factory = serial_factory
-        self.lock_path = Path(lock_path)
+        self.lock_path = Path(
+            lock_path
+            or os.environ.get(
+                "REMOTE_DAN_OBD_LOCK_PATH",
+                "/var/lib/remote-dan-lite/obdlink-sx.lock",
+            )
+        )
         self.command_timeout_s = command_timeout_s
         self.reset_timeout_s = reset_timeout_s
         self._serial: Any | None = None
@@ -218,6 +220,11 @@ class ELMSerialProvider:
     def connect(self) -> dict[str, Any]:
         if self._serial is not None:
             raise OBDInUse("OBDLink SX is already connected")
+        if not self.stable_path:
+            raise OBDProviderError(
+                "hardware OBD is not configured; set REMOTE_DAN_OBD_DEVICE "
+                "to the adapter's /dev/serial/by-id path"
+            )
         self._acquire_lock()
         try:
             self._serial = self._open_serial()
@@ -232,6 +239,7 @@ class ELMSerialProvider:
                     raise OBDProviderError(f"adapter rejected initialization command {command}")
             ati = self._exchange("ATI", timeout_s=self.command_timeout_s)
             sti = self._exchange("STI", timeout_s=self.command_timeout_s)
+            stdi = self._exchange("STDI", timeout_s=self.command_timeout_s)
             self._exchange("AT@1", timeout_s=self.command_timeout_s)
             proof_raw = self._exchange("0100", timeout_s=self.command_timeout_s)
             proof = parse_elm_response(proof_raw)
@@ -251,10 +259,13 @@ class ELMSerialProvider:
                 self._exchange("ATRV", timeout_s=self.command_timeout_s), "ATRV"
             )
             voltage_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*V", voltage_text, re.I)
+            model_identity = _response_text(stdi, "STDI")
+            if not model_identity or model_identity in {"?", "OK"}:
+                model_identity = _response_text(ati, "ATI")
             identity = {
                 "provider": self.name,
                 "adapter_identity": (
-                    f"{_response_text(ati, 'ATI')} / {_response_text(sti, 'STI')}"
+                    f"{model_identity} / {_response_text(sti, 'STI')}"
                 ),
                 "stable_path": self.stable_path,
                 "protocol": protocol_text,
@@ -264,35 +275,65 @@ class ELMSerialProvider:
             }
             self._identity = identity
             return dict(identity)
-        except Exception:
-            self._release()
+        except Exception as primary_error:
+            try:
+                self._release()
+            except Exception as cleanup_error:
+                primary_error.add_note(f"OBD cleanup also failed: {cleanup_error}")
             raise
 
     def query(self, command: str) -> str:
         if self._serial is None:
             raise OBDNotConnected("OBDLink SX is not connected")
         canonical = _canonical_command(command)
+        if canonical == "04":
+            raise PermissionError("hardware fault clearing is disabled")
         return self._exchange(canonical, timeout_s=self.command_timeout_s)
 
     def disconnect(self) -> None:
-        if self._serial is not None:
-            try:
+        command_error: Exception | None = None
+        cleanup_error: Exception | None = None
+        try:
+            if self._serial is not None:
                 self._exchange("ATPC", timeout_s=self.command_timeout_s)
-            except OBDProviderError:
-                pass
-        self._release()
+        except Exception as exc:
+            command_error = exc
+        try:
+            self._release()
+        except Exception as exc:
+            cleanup_error = exc
+        if command_error is not None and cleanup_error is not None:
+            raise OBDProviderError("adapter disconnect and cleanup failed") from ExceptionGroup(
+                "adapter disconnect failures", [command_error, cleanup_error]
+            )
+        if command_error is not None:
+            raise OBDProviderError("adapter disconnect failed") from command_error
+        if cleanup_error is not None:
+            raise OBDProviderError("adapter cleanup failed") from cleanup_error
 
     def _release(self) -> None:
+        errors: list[Exception] = []
         serial_port, self._serial = self._serial, None
+        lock_fd, self._lock_fd = self._lock_fd, None
+        self._identity = None
         if serial_port is not None:
             try:
                 serial_port.close()
-            except Exception:
-                pass
-        if self._lock_fd is not None:
+            except Exception as exc:
+                errors.append(exc)
+        if lock_fd is not None:
             try:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-            finally:
-                os.close(self._lock_fd)
-                self._lock_fd = None
-        self._identity = None
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except Exception as exc:
+                errors.append(exc)
+            try:
+                os.close(lock_fd)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            cause: BaseException = (
+                errors[0]
+                if len(errors) == 1
+                else ExceptionGroup("adapter ownership cleanup failures", errors)
+            )
+            raise OBDProviderError("adapter ownership cleanup failed") from cause

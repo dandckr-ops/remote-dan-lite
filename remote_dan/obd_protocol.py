@@ -8,6 +8,10 @@ class OBDProtocolError(ValueError):
     """Raised when an adapter response cannot be defended as valid OBD data."""
 
 
+class OBDAdapterError(OBDProtocolError):
+    """Raised for terminal ELM/STN transport or bus failures."""
+
+
 DTC_DESCRIPTIONS = {
     "P0028": "Intake valve control solenoid circuit range/performance, bank 2",
     "P0102": "Mass or volume air flow circuit low input",
@@ -39,33 +43,73 @@ def _hex_tokens(line: str) -> tuple[str, list[int]] | None:
     tokens = line.strip().replace(">", "").split()
     if len(tokens) < 2 or len(tokens[0]) not in {3, 8}:
         return None
-    if not re.fullmatch(r"[0-9A-Fa-f]+", "".join(tokens)):
-        return None
+    if not re.fullmatch(r"[0-9A-Fa-f]{3}|[0-9A-Fa-f]{8}", tokens[0]):
+        raise OBDProtocolError(f"malformed ELM frame header: {tokens[0]}")
+    if any(not re.fullmatch(r"[0-9A-Fa-f]{2}", token) for token in tokens[1:]):
+        raise OBDProtocolError(f"malformed ELM frame data: {line.strip()}")
     return tokens[0].upper(), [int(token, 16) for token in tokens[1:]]
 
 
-def parse_elm_response(raw: str) -> dict[str, bytes]:
-    """Parse header-enabled ELM/STN output and reassemble ISO-TP per responder."""
-    if "NO DATA" in raw.upper():
-        return {}
+def _parse_elm_response(
+    raw: str,
+    *,
+    scoped_errors: bool,
+) -> tuple[dict[str, bytes], list[dict[str, str]]]:
     payloads: dict[str, bytes] = {}
     pending: dict[str, tuple[int, bytearray, int]] = {}
+    errors: list[dict[str, str]] = []
+    invalid_responders: set[str] = set()
+    saw_no_data = False
+    terminal_errors = (
+        "BUS ERROR", "CAN ERROR", "STOPPED", "UNABLE TO CONNECT",
+        "BUFFER FULL", "DATA ERROR", "RX ERROR", "LV RESET",
+    )
+
+    def responder_error(ecu: str, message: str) -> None:
+        if not scoped_errors:
+            raise OBDProtocolError(message)
+        payloads.pop(ecu, None)
+        pending.pop(ecu, None)
+        invalid_responders.add(ecu)
+        errors.append({"ecu": ecu, "error": message})
+
     for line in raw.replace("\r", "\n").splitlines():
-        parsed = _hex_tokens(line)
-        if parsed is None:
+        cleaned = line.replace(">", "").strip()
+        if not cleaned:
             continue
+        upper = cleaned.upper()
+        if upper == "NO DATA":
+            saw_no_data = True
+            continue
+        explicit_adapter_error = (
+            upper in {"?", "ERROR", "BUS BUSY"}
+            or upper.endswith(" ERROR")
+            or upper.endswith(" ALERT")
+            or re.fullmatch(r"ERR[0-9A-F]+", upper) is not None
+        )
+        if explicit_adapter_error or any(error in upper for error in terminal_errors):
+            raise OBDAdapterError(f"adapter reported: {cleaned}")
+        if upper == "OK" or upper.startswith("SEARCHING") or upper.startswith("BUS INIT"):
+            continue
+        parsed = _hex_tokens(cleaned)
+        if parsed is None:
+            if re.fullmatch(r"(?:0[0-9A-F]{1,5}|ATRV)", upper):
+                continue
+            raise OBDProtocolError(f"malformed ELM response line: {cleaned}")
         ecu, data = parsed
-        if not data:
+        if not data or ecu in invalid_responders:
             continue
         frame_type = data[0] >> 4
         if frame_type == 0:
             length = data[0] & 0x0F
             if length > len(data) - 1:
-                raise OBDProtocolError(f"single-frame length exceeds data for ECU {ecu}")
+                responder_error(ecu, f"single-frame length exceeds data for ECU {ecu}")
+                continue
             payloads[ecu] = bytes(data[1:1 + length])
         elif frame_type == 1:
             if len(data) < 2:
-                raise OBDProtocolError(f"truncated first frame for ECU {ecu}")
+                responder_error(ecu, f"truncated first frame for ECU {ecu}")
+                continue
             length = ((data[0] & 0x0F) << 8) | data[1]
             buffer = bytearray(data[2:])
             if len(buffer) >= length:
@@ -74,13 +118,16 @@ def parse_elm_response(raw: str) -> dict[str, bytes]:
                 pending[ecu] = (length, buffer, 1)
         elif frame_type == 2:
             if ecu not in pending:
-                raise OBDProtocolError(f"continuation without first frame for ECU {ecu}")
+                responder_error(ecu, f"continuation without first frame for ECU {ecu}")
+                continue
             length, buffer, expected_sequence = pending[ecu]
             sequence = data[0] & 0x0F
             if sequence != expected_sequence:
-                raise OBDProtocolError(
-                    f"ISO-TP sequence gap for ECU {ecu}: expected {expected_sequence:X}, got {sequence:X}"
+                responder_error(
+                    ecu,
+                    f"ISO-TP sequence gap for ECU {ecu}: expected {expected_sequence:X}, got {sequence:X}",
                 )
+                continue
             buffer.extend(data[1:])
             if len(buffer) >= length:
                 payloads[ecu] = bytes(buffer[:length])
@@ -90,12 +137,30 @@ def parse_elm_response(raw: str) -> dict[str, bytes]:
         elif frame_type == 3:
             continue
         else:
-            raise OBDProtocolError(f"unsupported ISO-TP frame type {frame_type:X}")
+            responder_error(ecu, f"unsupported ISO-TP frame type {frame_type:X}")
     if pending:
-        raise OBDProtocolError(
-            "incomplete ISO-TP response from " + ", ".join(sorted(pending))
-        )
+        if not scoped_errors:
+            raise OBDProtocolError(
+                "incomplete ISO-TP response from " + ", ".join(sorted(pending))
+            )
+        for ecu in sorted(pending):
+            responder_error(ecu, f"incomplete ISO-TP response from {ecu}")
+    if saw_no_data and not payloads:
+        return {}, errors
+    return payloads, errors
+
+
+def parse_elm_response(raw: str) -> dict[str, bytes]:
+    """Strictly parse header-enabled ELM/STN output and reassemble ISO-TP."""
+    payloads, _ = _parse_elm_response(raw, scoped_errors=False)
     return payloads
+
+
+def parse_elm_response_scoped(
+    raw: str,
+) -> tuple[dict[str, bytes], list[dict[str, str]]]:
+    """Parse valid responders while returning responder-local framing errors."""
+    return _parse_elm_response(raw, scoped_errors=True)
 
 
 def decode_supported_pids(payload: bytes) -> set[int]:
@@ -231,22 +296,29 @@ def decode_dtc_payload(
     expected_service = {"stored": 0x43, "pending": 0x47, "permanent": 0x4A}[state]
     if not payload or payload[0] != expected_service:
         raise OBDProtocolError(f"not a positive {state} DTC response")
-    if len(payload) < 2:
-        raise OBDProtocolError("DTC response is missing its count")
-    count = payload[1]
-    data = payload[2:]
-    if len(data) < count * 2:
-        raise OBDProtocolError("DTC response is truncated")
+    data = payload[1:]
+    if len(data) % 2:
+        count = data[0]
+        counted_data = data[1:]
+        if len(counted_data) < count * 2:
+            raise OBDProtocolError("count-prefixed DTC response is truncated")
+        trailing = counted_data[count * 2:]
+        if any(trailing):
+            raise OBDProtocolError("count-prefixed DTC response has nonzero trailing data")
+        data = counted_data[:count * 2]
     results: list[dict[str, Any]] = []
-    for offset in range(0, count * 2, 2):
-        code = _decode_dtc(data[offset:offset + 2])
+    for offset in range(0, len(data), 2):
+        pair = data[offset:offset + 2]
+        if pair == b"\x00\x00":
+            continue
+        code = _decode_dtc(pair)
         results.append(
             {
                 "code": code,
                 "state": state,
                 "ecu": ecu.upper(),
                 "description": DTC_DESCRIPTIONS.get(code, "Generic SAE emissions DTC"),
-                "raw_hex": data[offset:offset + 2].hex().upper(),
+                "raw_hex": pair.hex().upper(),
             }
         )
     return results

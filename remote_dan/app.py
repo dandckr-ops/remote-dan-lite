@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import asynccontextmanager
 import json
 import math
 import os
@@ -9,11 +10,12 @@ import re
 import socket
 import threading
 from typing import Any, Callable, Literal
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from remote_dan import __version__
 from remote_dan.can_analysis import NOMINAL_BITRATES
@@ -69,6 +71,7 @@ from remote_dan.modbus_scan import (
     ModbusSimulatorBackend,
 )
 from remote_dan.obd_evidence import OBDEvidenceManager
+from remote_dan.obd_protocol import OBDAdapterError
 from remote_dan.obd_provider import (
     OBDInUse,
     OBDNotConnected,
@@ -408,6 +411,14 @@ class CustomerPayload(BaseModel):
     email: str | None = Field(default=None, max_length=254)
     notes: str | None = Field(default=None, max_length=4000)
 
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("customer name is required")
+        return normalized
+
 
 class VehiclePayload(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
@@ -418,6 +429,14 @@ class VehiclePayload(BaseModel):
     engine: str | None = Field(default=None, max_length=120)
     asset_tag: str | None = Field(default=None, max_length=80)
     notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("vehicle display name is required")
+        return normalized
 
 
 class DiagnosticSessionPayload(BaseModel):
@@ -439,6 +458,7 @@ class OBDConnectPayload(BaseModel):
 class OBDSnapshotPayload(BaseModel):
     kind: Literal["live", "faults", "vehicle_info"]
     label: str = Field(default="OBD snapshot", min_length=1, max_length=80)
+    operation_id: UUID
 
 
 CapturePayload.model_rebuild()
@@ -592,6 +612,7 @@ def create_app(
     )
     database.initialize()
     pico_lock = threading.Lock()
+    usb_routing_obd_lock = threading.Lock()
     simulator = CaptureManager(
         capture_dir,
         backend=SimulatorBackend(),
@@ -624,10 +645,20 @@ def create_app(
         service=obd_service,
     )
 
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        if obd_service.status()["connected"]:
+            try:
+                obd_service.disconnect()
+            except Exception:
+                pass
+
     app = FastAPI(
         title="Remote Dan Lite",
         version=__version__,
         description="Traceworks field capture appliance",
+        lifespan=lifespan,
     )
     app.state.capture_dir = capture_dir
     app.state.database = database
@@ -644,6 +675,7 @@ def create_app(
     app.state.obd_service = obd_service
     app.state.obd_evidence = obd_evidence
     app.state.pico_lock = pico_lock
+    app.state.usb_routing_obd_lock = usb_routing_obd_lock
     app.state.serial_hardware_manager = (
         SerialCaptureManager(capture_dir, backend=serial_backend, database=database)
         if serial_backend is not None
@@ -715,6 +747,7 @@ def create_app(
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
 
     @app.get("/api/status")
     def status() -> dict[str, object]:
@@ -1037,6 +1070,8 @@ def create_app(
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except OBDAdapterError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except OBDProviderError as exc:
@@ -1053,15 +1088,18 @@ def create_app(
         def optional(value: str | None) -> str | None:
             return value.strip() if value and value.strip() else None
 
-        return {
-            "id": database.create_customer(
-                name=payload.name.strip(),
-                company=optional(payload.company),
-                phone=optional(payload.phone),
-                email=optional(payload.email),
-                notes=optional(payload.notes),
-            )
-        }
+        try:
+            return {
+                "id": database.create_customer(
+                    name=payload.name,
+                    company=optional(payload.company),
+                    phone=optional(payload.phone),
+                    email=optional(payload.email),
+                    notes=optional(payload.notes),
+                )
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/vehicles")
     def vehicles() -> list[dict[str, object]]:
@@ -1117,9 +1155,10 @@ def create_app(
 
     @app.post("/api/obd/connect", status_code=201)
     def obd_connect(payload: OBDConnectPayload) -> dict[str, object]:
-        return obd_result(
-            lambda: obd_service.connect(mode=payload.mode, session_id=payload.session_id)
-        )
+        with usb_routing_obd_lock:
+            return obd_result(
+                lambda: obd_service.connect(mode=payload.mode, session_id=payload.session_id)
+            )
 
     @app.post("/api/obd/disconnect")
     def obd_disconnect() -> dict[str, object]:
@@ -1140,7 +1179,11 @@ def create_app(
     @app.post("/api/obd/snapshots", status_code=201)
     def create_obd_snapshot(payload: OBDSnapshotPayload) -> dict[str, object]:
         return obd_result(
-            lambda: obd_evidence.save(kind=payload.kind, label=payload.label.strip())
+            lambda: obd_evidence.save(
+                kind=payload.kind,
+                label=payload.label.strip(),
+                operation_id=str(payload.operation_id),
+            )
         )
 
     @app.post("/api/obd/faults/clear/prepare")
@@ -1286,15 +1329,22 @@ def create_app(
     def apply_usb_routing(payload: UsbRoutingApplyPayload) -> dict[str, object]:
         if not payload.confirmed:
             raise HTTPException(status_code=422, detail="explicit routing confirmation is required")
-        if pico_lock.locked():
-            raise HTTPException(status_code=409, detail="a local scope or bus capture is active")
-        manager = app.state.serial_hardware_manager
-        if manager is not None and manager._lock.locked():
-            raise HTTPException(status_code=409, detail="a local SEL serial capture is active")
-        try:
-            return app.state.routing_client.request({"action": "apply", "inventory_revision": payload.inventory_revision, "routes": payload.routes})
-        except (OSError, RoutingSocketError) as exc:
-            raise HTTPException(status_code=503, detail=f"USB routing apply failed: {exc}") from exc
+        with usb_routing_obd_lock:
+            obd_status = obd_service.status()
+            if obd_status["connected"] and obd_status["provider"] != "obd-simulator":
+                raise HTTPException(
+                    status_code=409,
+                    detail="a local hardware OBD connection owns the adapter",
+                )
+            if pico_lock.locked():
+                raise HTTPException(status_code=409, detail="a local scope or bus capture is active")
+            manager = app.state.serial_hardware_manager
+            if manager is not None and manager._lock.locked():
+                raise HTTPException(status_code=409, detail="a local SEL serial capture is active")
+            try:
+                return app.state.routing_client.request({"action": "apply", "inventory_revision": payload.inventory_revision, "routes": payload.routes})
+            except (OSError, RoutingSocketError) as exc:
+                raise HTTPException(status_code=503, detail=f"USB routing apply failed: {exc}") from exc
 
     @app.post("/api/serial/captures", status_code=201)
     def create_serial_capture(payload: SerialCapturePayload) -> dict[str, object]:

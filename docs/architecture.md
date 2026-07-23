@@ -19,7 +19,7 @@ At the current repository baseline:
 - CAN Decode v1 is **private field-fixture proven and in governed source**. It derives generic Classical CAN frame and identifier evidence from existing CAN or eligible Bus Sniffer waveforms without reacquisition or transmission; live deployment remains a separate acceptance gate.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
 - SQLite metadata and evidence lineage are **proven live**.
-- Seven core session-centered tabs are **proven live**. Bus Sniffer and Modbus expand the governed source to nine tabs and are **simulator-proven**; their first real protected-input/Pico and on-network discovery runs remain commissioning boundaries. The Serial receive lane is **in governed source and simulator-proven**; its first real C662 capture remains a commissioning boundary.
+- Seven core session-centered tabs are **proven live**. Bus Sniffer, OBD, and Modbus expand the governed source to ten tabs and are **simulator-proven**; their first appliance acceptance runs remain commissioning boundaries. The direct OBDLink SX read-only hardware path is separately **proven** against a real vehicle. The Serial receive lane is **in governed source and simulator-proven**; its first real C662 capture remains a commissioning boundary.
 - Profile-driven Scope acquisition is **hardware-preflight proven** on the real 2406B, including a 10-second capture and model-accepted ranges from ±20 mV through ±20 V.
 - The Anybus AB7702 is a **connected satellite**. Bounded read-only HICP/43-14 discovery and durable transaction evidence are **in governed source and simulator-proven**; real network acceptance remains pending.
 - The complete three-device enclosure and independent recovery hardware remain an architecture target.
@@ -86,10 +86,11 @@ The implemented primary tabs are:
 3. **Scope** — profile-driven physical-signal acquisition with four configurable channels
 4. **Serial** — raw serial configuration, capture, and decode evidence
 5. **CAN** — listen-only acquisition, battery gauge, CAN-H/CAN-L evidence, passive signal intelligence, confidence-ranked protocol fingerprints, and generic decode of existing eligible captures
-6. **Modbus** — manually initiated, interface-scoped HICP and Modbus 43/14 identity discovery
-7. **Tests** — guided workflows that configure the shared acquisition engines
-8. **Timeline** — correlated scope, CAN, serial, test, and operator events
-9. **Evidence** — session packages, lineage, raw artifacts, calculations, reports, and operator findings
+6. **OBD** — active generic SAE J1979 live data, readiness, DTC, VIN, records, and evidence through a direct USB OBDLink SX provider
+7. **Modbus** — manually initiated, interface-scoped HICP and Modbus 43/14 identity discovery
+8. **Tests** — guided workflows that configure the shared acquisition engines
+9. **Timeline** — correlated scope, CAN, serial, OBD, test, and operator events
+10. **Evidence** — session packages, lineage, raw artifacts, calculations, reports, and operator findings
 
 Connections and System remain secondary setup areas.
 
@@ -132,6 +133,16 @@ Published frame rows require complete Classical CAN structure: valid stuffing th
 Each explicit decode action creates a child evidence run containing `frames.jsonl`, `identifiers.csv`, `summary.json`, and `manifest.json`. The child stores the source/parent run ID, authoritative SQLite parent capture ID, source filename and SHA-256, decoder settings, polarity, nominal bitrate, frame/identifier/rejected counts, inherited session, limitations, and `writes_performed: 0`. It never mutates the source manifest, waveform, SQLite capture row, or source artifact records.
 
 The current UI and API are intentionally generic. They show frame timestamps, standard/extended identifiers, RTR/DLC, payload bytes, cadence, payload transitions, and byte-change counts. They do not provide DBC decoding, OEM signal meaning, PID/VIN extraction, ISO-TP/UDS reassembly, CAN FD payload decoding, transmit, ACK generation, replay, stimulation, or queries.
+
+### Active generic OBD boundary
+
+The OBD lane is intentionally separate from passive CAN acquisition. It actively sends bounded SAE J1979 requests through one long-lived, serialized provider while preserving the source ECU and exact adapter transcript. The first hardware provider opens only the configured `/dev/serial/by-id/...` OBDLink SX path at 115200 baud, requests exclusive tty ownership, holds a process-external lock, and is deliberately pinned to the commissioned ISO 15765-4 CAN 11/500 transport. Other J1979 transports are not yet claimed. It does not silently fall back from hardware to simulator.
+
+Supported-PID discovery starts at Mode 01 PID 00 and follows continuation pages only when advertised. Initial normalized reads cover readiness/MIL, load, temperatures, fuel trims, MAP, RPM, speed, timing, MAF, throttle, runtime, fuel level, and module voltage. DTC reads retain stored, pending, and permanent classifications separately. Mode 09 VIN observations retain the reporting ECU and surface mismatches rather than choosing silently.
+
+This is generic emissions/powertrain diagnostics, not complete manufacturer-enhanced coverage. ABS, SRS, EyeSight, body, coding, actuator tests, security access, reflashing, and programming are outside this provider.
+
+Mode 04 is consequential: it can clear stored emissions DTCs, freeze-frame/test information, and readiness completion, while permanent DTCs may remain. The current UI and API fail closed because the service has no authenticated operator principal. A typed phrase or LAN allowlist alone is not enough. Hardware clear requires a later authenticated prepare/commit flow with pre-clear evidence, stationary/RPM and voltage checks, a short-lived connection-bound token, one command attempt with no automatic retry, post-clear evidence, and an append-only audit record even when the result is ambiguous.
 
 ### Passive Serial boundary
 
@@ -177,10 +188,13 @@ asset
                  ├── artifact
                  ├── channel configuration
                  ├── event marker
-                 └── test result
+                 ├── test result
+                 └── OBD snapshot
+                      ├── DTC observation
+                      └── live-value observation
 ```
 
-SQLite stores local metadata and relationships. It does not store large waveform or report files as database blobs.
+SQLite schema version 2 migrates in place, preserves schema-v1 evidence, normalizes customers while retaining legacy free-form customer names, reuses `assets` for vehicles, and adds OBD connection/snapshot/value/DTC lineage plus database-enforced append-only clear audit events. It does not store large waveform or report files as database blobs.
 
 Derived evidence preserves the same capture/artifact model while carrying explicit parent identifiers and source hashes in the child manifest, summary, and SQLite metadata. Parent identity is resolved by exact source `run_id`; a manifest-provided capture ID is not treated as authoritative.
 

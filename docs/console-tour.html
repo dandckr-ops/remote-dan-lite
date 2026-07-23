@@ -31,10 +31,11 @@
         <button type="button" role="tab" id="tour-tab-scope" data-tab="scope" aria-controls="tour-panel-scope" aria-selected="false" tabindex="-1">03 Scope</button>
         <button type="button" role="tab" id="tour-tab-serial" data-tab="serial" aria-controls="tour-panel-serial" aria-selected="false" tabindex="-1">04 Serial</button>
         <button type="button" role="tab" id="tour-tab-can" data-tab="can" aria-controls="tour-panel-can" aria-selected="false" tabindex="-1">05 CAN</button>
-        <button type="button" role="tab" id="tour-tab-modbus" data-tab="modbus" aria-controls="tour-panel-modbus" aria-selected="false" tabindex="-1">06 Modbus</button>
-        <button type="button" role="tab" id="tour-tab-tests" data-tab="tests" aria-controls="tour-panel-tests" aria-selected="false" tabindex="-1">07 Tests</button>
-        <button type="button" role="tab" id="tour-tab-timeline" data-tab="timeline" aria-controls="tour-panel-timeline" aria-selected="false" tabindex="-1">08 Timeline</button>
-        <button type="button" role="tab" id="tour-tab-evidence" data-tab="evidence" aria-controls="tour-panel-evidence" aria-selected="false" tabindex="-1">09 Evidence</button>
+        <button type="button" role="tab" id="tour-tab-obd" data-tab="obd" aria-controls="tour-panel-obd" aria-selected="false" tabindex="-1">06 OBD</button>
+        <button type="button" role="tab" id="tour-tab-modbus" data-tab="modbus" aria-controls="tour-panel-modbus" aria-selected="false" tabindex="-1">07 Modbus</button>
+        <button type="button" role="tab" id="tour-tab-tests" data-tab="tests" aria-controls="tour-panel-tests" aria-selected="false" tabindex="-1">08 Tests</button>
+        <button type="button" role="tab" id="tour-tab-timeline" data-tab="timeline" aria-controls="tour-panel-timeline" aria-selected="false" tabindex="-1">09 Timeline</button>
+        <button type="button" role="tab" id="tour-tab-evidence" data-tab="evidence" aria-controls="tour-panel-evidence" aria-selected="false" tabindex="-1">10 Evidence</button>
       </div>
     </nav>
 
@@ -64,23 +65,28 @@ candidate: Modbus RTU</pre></div><aside class="card"><h3>Console appearance</h3>
       <div class="content"><div class="card"><h3>Capability</h3><p>Reviews fixed VBAT, CAN-H, and CAN-L capture evidence for bus load, bitrate, frame form, identifiers, physical-layer measurements, and CRC-gated fingerprints.</p><h3>Boundary / safety</h3><p class="boundary">Bitrate or voltage shape alone never proves a protocol. This preview cannot attach to a vehicle or transmit, acknowledge, terminate, bias, or alter a network.</p><div class="wave" aria-label="Representative CAN differential waveform"><svg viewBox="0 0 700 126" preserveAspectRatio="none" aria-hidden="true"><path d="M0 84 L60 84 70 35 92 35 102 84 145 84 155 35 175 35 185 84 255 84 265 35 285 35 295 84 700 84" fill="none" stroke="#61dff0" stroke-width="3"/></svg></div></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Battery voltage: 12.46 V</li><li>Nominal rate: 500 kbit/s</li><li>Bus load: 18.4%</li><li>Fingerprint: J1939 candidate / CRC-gated</li></ul></aside></div>
     </section>
 
+    <section class="console" id="tour-panel-obd" role="tabpanel" aria-labelledby="tour-tab-obd" data-panel="obd" hidden>
+      <header class="console-head"><div><p class="eyebrow">06 / SAE J1979 emissions diagnostics</p><h2>OBD</h2></div><span class="chip">READ-ONLY HARDWARE</span></header>
+      <div class="content"><div class="card"><h3>Capability</h3><p>Shows the OBDLink SX workspace for supported live PIDs, readiness, stored/pending/permanent emissions DTCs, VIN, customer and vehicle records, and checksum-backed evidence snapshots.</p><h3>Boundary / safety</h3><p class="boundary">This preview cannot connect to an adapter or vehicle. The live hardware path is commissioned only for ISO 15765-4 CAN 11/500 emissions diagnostics, and Mode $04 clearing remains disabled.</p><button class="demo" type="button" disabled>Read OBD data (preview only)</button></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Adapter: OBDLink SX</li><li>Protocol: ISO 15765-4 CAN 11/500</li><li>Readiness and DTC classes remain distinct</li><li>Saved observations retain raw-response lineage</li></ul></aside></div>
+    </section>
+
     <section class="console" id="tour-panel-modbus" role="tabpanel" aria-labelledby="tour-tab-modbus" data-panel="modbus" hidden>
-      <header class="console-head"><div><p class="eyebrow">06 / network identity discovery</p><h2>Modbus</h2></div><span class="chip">READ-ONLY DESIGN</span></header>
+      <header class="console-head"><div><p class="eyebrow">07 / network identity discovery</p><h2>Modbus</h2></div><span class="chip">READ-ONLY DESIGN</span></header>
       <div class="content"><div class="card"><h3>Capability</h3><p>Shows bounded, manually initiated interface-selected HICP plus Modbus 43/14 identity discovery and preserves transaction outcomes.</p><h3>Boundary / safety</h3><p class="boundary">There are no register reads, retries, or writes in this workflow. Representative device rows are not network observations.</p><button class="demo" type="button" disabled>Start discovery (preview only)</button></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Interface: 192.168.10.0/24</li><li>Confirmed identities: 2</li><li>Anybus gateway: observed</li><li>Writes performed: <strong class="status-ok">0</strong></li></ul></aside></div>
     </section>
 
     <section class="console" id="tour-panel-tests" role="tabpanel" aria-labelledby="tour-tab-tests" data-panel="tests" hidden>
-      <header class="console-head"><div><p class="eyebrow">07 / guided workflows</p><h2>Tests</h2></div><span class="chip">EVIDENCE-FIRST</span></header>
+      <header class="console-head"><div><p class="eyebrow">08 / guided workflows</p><h2>Tests</h2></div><span class="chip">EVIDENCE-FIRST</span></header>
       <div class="content"><div class="card"><h3>Capability</h3><p>Packages repeatable guided workflows such as relative compression and cylinder contribution around the shared capture engines and their raw evidence.</p><h3>Boundary / safety</h3><p class="boundary">A test result preserves calculations, confidence, and technician interpretation; it does not automatically claim a fault cause or operate the vehicle.</p><div class="metric"><div><span>Selected test</span><strong>Relative compression</strong></div><div><span>Evidence</span><strong>CAP-024</strong></div><div><span>Interpretation</span><strong>pending</strong></div></div></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Guided setup prompts</li><li>Capture reuse rather than a separate engine</li><li>Calculation visibility</li><li>Operator finding remains explicit</li></ul></aside></div>
     </section>
 
     <section class="console" id="tour-panel-timeline" role="tabpanel" aria-labelledby="tour-tab-timeline" data-panel="timeline" hidden>
-      <header class="console-head"><div><p class="eyebrow">08 / timing context</p><h2>Timeline</h2></div><span class="chip">SESSION ORDER</span></header>
+      <header class="console-head"><div><p class="eyebrow">09 / timing context</p><h2>Timeline</h2></div><span class="chip">SESSION ORDER</span></header>
       <div class="content"><div class="card"><h3>Capability</h3><p>Places captures, guided tests, notes, and event markers in durable session order so a reviewer can reconstruct timing context.</p><h3>Boundary / safety</h3><p class="boundary">Preview timestamps are representative. Timeline order improves traceability but cannot substitute for synchronized source timing or a technician's observation.</p><ol class="list"><li><span class="mono">09:41:02</span> Session opened</li><li><span class="mono">09:43:18</span> CAN baseline captured</li><li><span class="mono">09:46:09</span> Operator note added</li></ol></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Session: CASE-017</li><li>Markers: 3</li><li>Captures: 2</li><li>All dates shown are example data</li></ul></aside></div>
     </section>
 
     <section class="console" id="tour-panel-evidence" role="tabpanel" aria-labelledby="tour-tab-evidence" data-panel="evidence" hidden>
-      <header class="console-head"><div><p class="eyebrow">09 / durable review package</p><h2>Evidence</h2></div><span class="chip">CHECKSUM LINEAGE</span></header>
+      <header class="console-head"><div><p class="eyebrow">10 / durable review package</p><h2>Evidence</h2></div><span class="chip">CHECKSUM LINEAGE</span></header>
       <div class="content"><div class="card"><h3>Capability</h3><p>Indexes artifacts through asset, case, session, capture, and artifact lineage while keeping raw files ordinary downloadable evidence objects.</p><h3>Boundary / safety</h3><p class="boundary">The listed manifest and hashes are illustrative. This page cannot generate, download, verify, or alter actual appliance evidence.</p><ul class="list"><li><span class="mono">capture.csv</span> / raw waveform</li><li><span class="mono">summary.json</span> / measurements and provenance</li><li><span class="mono">manifest.json</span> / SHA-256 inventory</li></ul></div><aside class="card"><h3>Console appearance</h3><ul class="list"><li>Capture: CAP-024</li><li>Artifacts: 5</li><li>Integrity: representative manifest</li><li>Review state: ready for technician export</li></ul></aside></div>
     </section>
 

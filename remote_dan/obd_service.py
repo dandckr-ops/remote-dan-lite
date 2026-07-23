@@ -13,7 +13,7 @@ from remote_dan.obd_protocol import (
     decode_readiness,
     decode_supported_pids,
     decode_vin,
-    parse_elm_response,
+    parse_elm_response_scoped,
 )
 from remote_dan.obd_provider import (
     ELMSerialProvider,
@@ -107,8 +107,13 @@ class OBDService:
                         else None
                     ),
                 )
-            except Exception:
-                provider.disconnect()
+            except Exception as primary_error:
+                try:
+                    provider.disconnect()
+                except Exception as cleanup_error:
+                    primary_error.add_note(
+                        f"OBD provider cleanup also failed: {cleanup_error}"
+                    )
                 raise
             self._provider = provider
             self._identity = identity
@@ -121,15 +126,37 @@ class OBDService:
         with self._lock:
             provider = self._provider
             connection_id = self._connection_id
-            self._provider = None
-            self._identity = None
-            self._supported_pids = set()
-            self._connection_id = None
-            self._session_id = None
-            if provider is not None:
-                provider.disconnect()
-            if connection_id is not None:
-                self.database.close_obd_connection(connection_id, status="closed")
+            disconnect_error: Exception | None = None
+            database_error: Exception | None = None
+            try:
+                if provider is not None:
+                    provider.disconnect()
+            except Exception as exc:
+                disconnect_error = exc
+            try:
+                if connection_id is not None:
+                    self.database.close_obd_connection(
+                        connection_id,
+                        status="error" if disconnect_error else "closed",
+                        error=(str(disconnect_error)[:1000] if disconnect_error else None),
+                    )
+            except Exception as exc:
+                database_error = exc
+            finally:
+                self._provider = None
+                self._identity = None
+                self._supported_pids = set()
+                self._connection_id = None
+                self._session_id = None
+            if disconnect_error is not None and database_error is not None:
+                raise ExceptionGroup(
+                    "OBD provider and database disconnect cleanup failed",
+                    [disconnect_error, database_error],
+                )
+            if disconnect_error is not None:
+                raise disconnect_error
+            if database_error is not None:
+                raise database_error
             return self.status()
 
     def _require_provider(self) -> OBDProvider:
@@ -145,7 +172,7 @@ class OBDService:
         responders: set[str] = set()
         page = 0x00
         while page <= 0xA0:
-            payloads = parse_elm_response(provider.query(f"01{page:02X}"))
+            payloads, _ = parse_elm_response_scoped(provider.query(f"01{page:02X}"))
             if not payloads:
                 if page == 0:
                     raise OBDProtocolError("vehicle returned no supported-PID bitmap")
@@ -173,19 +200,27 @@ class OBDService:
             raw_responses: dict[str, str] = {}
             for pid in sorted(self._supported_pids & PID_DEFINITIONS.keys()):
                 command = f"01{pid:02X}"
-                try:
-                    raw = provider.query(command)
-                    raw_responses[command] = raw
-                    payloads = parse_elm_response(raw)
-                    if not payloads:
+                raw = provider.query(command)
+                raw_responses[command] = raw
+                payloads, frame_errors = parse_elm_response_scoped(raw)
+                errors.extend({"command": command, **item} for item in frame_errors)
+                if not payloads:
+                    if not frame_errors:
                         errors.append({"command": command, "error": "no_data"})
-                        continue
-                    for ecu, payload in payloads.items():
-                        values.append(
-                            decode_live_pid(payload, ecu=ecu, sampled_at=sampled_at)
+                    continue
+                for ecu, payload in payloads.items():
+                    try:
+                        decoded = decode_live_pid(payload, ecu=ecu, sampled_at=sampled_at)
+                        expected_pid = f"{pid:02X}"
+                        if decoded["pid"] != expected_pid:
+                            raise OBDProtocolError(
+                                f"response PID {decoded['pid']} does not match requested PID {expected_pid}"
+                            )
+                        values.append(decoded)
+                    except OBDProtocolError as exc:
+                        errors.append(
+                            {"command": command, "ecu": ecu, "error": str(exc)}
                         )
-                except (OBDProtocolError, RuntimeError, ValueError) as exc:
-                    errors.append({"command": command, "error": str(exc)})
             return {
                 "sampled_at": sampled_at,
                 "values": values,
@@ -199,10 +234,16 @@ class OBDService:
             observed_at = _utc_now()
             raw_responses: dict[str, str] = {}
             readiness: list[dict[str, Any]] = []
+            errors: list[dict[str, str]] = []
             raw = provider.query("0101")
             raw_responses["0101"] = raw
-            for ecu, payload in parse_elm_response(raw).items():
-                readiness.append(decode_readiness(payload, ecu=ecu))
+            readiness_payloads, readiness_frame_errors = parse_elm_response_scoped(raw)
+            errors.extend({"command": "0101", **item} for item in readiness_frame_errors)
+            for ecu, payload in readiness_payloads.items():
+                try:
+                    readiness.append(decode_readiness(payload, ecu=ecu))
+                except OBDProtocolError as exc:
+                    errors.append({"command": "0101", "ecu": ecu, "error": str(exc)})
 
             grouped: dict[str, list[dict[str, Any]]] = {
                 "stored": [], "pending": [], "permanent": [],
@@ -211,15 +252,28 @@ class OBDService:
             for command, state in (("03", "stored"), ("07", "pending"), ("0A", "permanent")):
                 raw = provider.query(command)
                 raw_responses[command] = raw
-                payloads = parse_elm_response(raw)
+                payloads, frame_errors = parse_elm_response_scoped(raw)
+                errors.extend({"command": command, **item} for item in frame_errors)
                 if not payloads:
-                    status[state] = "no_data"
+                    status[state] = "error" if frame_errors else "no_data"
                     continue
-                status[state] = "complete"
+                decoded_responders = 0
+                failed_responders = len(frame_errors)
                 for ecu, payload in payloads.items():
-                    grouped[state].extend(
-                        decode_dtc_payload(payload, state=state, ecu=ecu)  # type: ignore[arg-type]
-                    )
+                    try:
+                        grouped[state].extend(
+                            decode_dtc_payload(payload, state=state, ecu=ecu)  # type: ignore[arg-type]
+                        )
+                        decoded_responders += 1
+                    except OBDProtocolError as exc:
+                        failed_responders += 1
+                        errors.append({"command": command, "ecu": ecu, "error": str(exc)})
+                if decoded_responders and failed_responders:
+                    status[state] = "partial"
+                elif decoded_responders:
+                    status[state] = "complete"
+                else:
+                    status[state] = "error"
             return {
                 "observed_at": observed_at,
                 "readiness": readiness,
@@ -227,6 +281,7 @@ class OBDService:
                 "stored_status": status.get("stored", "no_data"),
                 "pending_status": status.get("pending", "no_data"),
                 "permanent_status": status.get("permanent", "no_data"),
+                "errors": errors,
                 "raw_responses": raw_responses,
             }
 
@@ -236,11 +291,16 @@ class OBDService:
             if self._identity is None:
                 raise OBDNotConnected("OBD identity is unavailable")
             raw = provider.query("0902")
-            payloads = parse_elm_response(raw)
-            vins = [
-                {"ecu": ecu, "vin": decode_vin(payload)}
-                for ecu, payload in sorted(payloads.items())
+            payloads, frame_errors = parse_elm_response_scoped(raw)
+            vins: list[dict[str, str]] = []
+            errors: list[dict[str, str]] = [
+                {"command": "0902", **item} for item in frame_errors
             ]
+            for ecu, payload in sorted(payloads.items()):
+                try:
+                    vins.append({"ecu": ecu, "vin": decode_vin(payload)})
+                except OBDProtocolError as exc:
+                    errors.append({"command": "0902", "ecu": ecu, "error": str(exc)})
             distinct = {item["vin"] for item in vins}
             return {
                 "observed_at": _utc_now(),
@@ -251,6 +311,7 @@ class OBDService:
                 "protocol": self._identity["protocol"],
                 "responder_ids": list(self._identity.get("responder_ids", [])),
                 "voltage": self._identity.get("voltage"),
+                "errors": errors,
                 "raw_responses": {"0902": raw},
             }
 

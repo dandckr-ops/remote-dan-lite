@@ -51,7 +51,7 @@ h1 span { color: var(--muted); font-weight: 400; }
 
 .tab-bar {
   display: grid;
-  grid-template-columns: repeat(9, minmax(132px, 1fr));
+  grid-template-columns: repeat(10, minmax(132px, 1fr));
   overflow-x: auto;
   border: 1px solid var(--rule);
   background: rgba(7, 16, 13, .94);
@@ -308,10 +308,64 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .run-card a { color: var(--cream); font-size: 10px; text-decoration: none; border-bottom: 1px solid var(--rule); }
 .empty-list { margin: 0; padding: 24px; color: var(--muted); font-size: 11px; }
 
+.obd-connection-panel { overflow: visible; }
+.obd-boundary { margin: 0; padding: 16px 20px; color: var(--muted); font-size: 11px; line-height: 1.65; border-bottom: 1px solid var(--rule); }
+.obd-toolbar { display: grid; grid-template-columns: minmax(240px, 1.5fr) minmax(190px, 1fr) auto auto; gap: 12px; align-items: end; padding: 18px 20px; border-bottom: 1px solid var(--rule); }
+.obd-toolbar .capture-button, .obd-toolbar .plain-button { min-height: 43px; grid-column: auto; }
+.obd-connection-grid, .obd-vehicle-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.obd-connection-grid > div, .obd-vehicle-facts > div { min-width: 0; padding: 16px 18px; border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+.obd-connection-grid > div:last-child, .obd-vehicle-facts > div:last-child { border-right: 0; }
+.obd-connection-grid dt, .obd-vehicle-facts dt { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.obd-connection-grid dd, .obd-vehicle-facts dd { margin: 8px 0 0; overflow-wrap: anywhere; color: var(--cream); font-size: 12px; }
+.obd-subnav { margin-top: 14px; border: 1px solid var(--rule); background: var(--panel-deep); overflow-x: auto; }
+.obd-tab-bar { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); min-width: 560px; }
+.obd-tab-bar button { min-height: 48px; border: 0; border-right: 1px solid var(--rule); background: transparent; color: var(--muted); font-family: var(--condensed); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
+.obd-tab-bar button:last-child { border-right: 0; }
+.obd-tab-bar button[aria-selected="true"] { background: rgba(92, 255, 154, .08); color: var(--live); box-shadow: inset 0 -2px 0 var(--live); }
+.obd-tab-bar button:focus-visible { outline: 2px solid var(--cream); outline-offset: -3px; }
+.obd-subpanel { margin-top: 14px; }
+.obd-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.obd-actions .plain-button, .obd-record-form .plain-button, #obd-record-refresh-button { min-height: 44px; padding: 10px 12px; }
+.obd-updated { margin: 0; padding: 0 20px 14px; color: var(--muted); font-size: 9px; }
+.obd-live-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.obd-live-grid > .empty-list { grid-column: 1 / -1; }
+.obd-live-card { min-height: 122px; padding: 18px; border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+.obd-live-card:nth-child(4n) { border-right: 0; }
+.obd-live-card span, .obd-live-card small { display: block; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.obd-live-card strong { display: block; margin: 16px 0 12px; color: var(--cream); font-family: var(--condensed); font-size: 27px; }
+.obd-live-card.fresh small { color: var(--live); }
+.obd-live-card.stale { opacity: .65; }
+.obd-live-card.stale small { color: var(--amber); }
+.obd-readiness { padding: 18px 20px; border-top: 1px solid var(--rule); }
+.obd-readiness h3, .obd-fault-grid h3, .obd-clear-panel h3, .obd-record-form h3 { margin: 0 0 12px; font-family: var(--condensed); font-size: 17px; text-transform: uppercase; }
+#obd-readiness-list { display: grid; gap: 8px; }
+#obd-readiness-list article { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--rule); }
+#obd-readiness-list span { color: var(--muted); font-size: 10px; }
+.obd-fault-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.obd-fault-grid > section { padding: 18px; border-right: 1px solid var(--rule); }
+.obd-fault-grid > section:last-child { border-right: 0; }
+.obd-fault-grid h3 span { color: var(--live); }
+.obd-fault-grid ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.obd-fault-grid li { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--rule); color: var(--muted); font-size: 10px; }
+.obd-fault-grid li strong { color: var(--cream); font-family: var(--condensed); font-size: 20px; }
+.obd-fault-grid li small { color: var(--amber); }
+.obd-clear-panel { padding: 20px; border-top: 1px solid #693d37; background: rgba(255, 91, 76, .045); }
+.obd-clear-panel p { max-width: 1000px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.danger-button { min-height: 42px; padding: 0 18px; border: 1px solid #a44d43; background: #351714; color: #ffaaa1; font: 700 11px var(--condensed); text-transform: uppercase; letter-spacing: .07em; }
+.danger-button:disabled { opacity: .45; cursor: not-allowed; }
+.obd-vehicle-facts { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.obd-record-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.obd-record-form { display: grid; align-content: start; gap: 11px; padding: 18px; border-right: 1px solid var(--rule); }
+.obd-record-form:last-child { border-right: 0; }
+.obd-record-list { display: grid; border-top: 1px solid var(--rule); }
+.obd-record-list article { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.obd-record-list article:last-child { border-bottom: 0; }
+.obd-record-list span, .obd-record-list small { color: var(--muted); font-size: 10px; }
+
 footer { display: flex; justify-content: space-between; gap: 18px; color: var(--muted); font-size: 9px; line-height: 1.5; text-transform: uppercase; letter-spacing: .08em; padding: 18px 2px 0; }
 
 @media (max-width: 1050px) {
-  .tab-bar { grid-template-columns: repeat(9, minmax(122px, 1fr)); }
+  .tab-bar { grid-template-columns: repeat(10, minmax(122px, 1fr)); }
   .tab-button { min-width: 122px; }
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .can-capture-form { grid-template-columns: 1fr 1fr; }
@@ -329,6 +383,14 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .analysis-metric:nth-child(2n) { border-right: 0; }
   .analysis-metric:nth-last-child(-n + 4) { border-bottom: 1px solid var(--rule); }
   .analysis-metric:nth-last-child(-n + 2) { border-bottom: 0; }
+  .obd-toolbar { grid-template-columns: 1fr 1fr; }
+  .obd-toolbar .capture-button, .obd-toolbar .plain-button { grid-column: auto; }
+  .obd-live-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .obd-live-card:nth-child(4n) { border-right: 1px solid var(--rule); }
+  .obd-live-card:nth-child(3n) { border-right: 0; }
+  .obd-record-grid { grid-template-columns: 1fr 1fr; }
+  .obd-record-form:nth-child(2) { border-right: 0; }
+  .obd-record-form:last-child { grid-column: 1 / -1; border-top: 1px solid var(--rule); }
 }
 
 @media (max-width: 900px) {
@@ -357,7 +419,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .shell { width: min(100% - 22px, 1520px); padding-top: 24px; }
   .masthead { flex-direction: column; align-items: flex-start; }
   .status-stack { text-align: left; }
-  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(9, 112px); }
+  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(10, 112px); }
   .tab-button { min-width: 112px; font-size: 10px; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .panel-heading > div { width: 100%; }
@@ -399,5 +461,13 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .timeline-event { grid-template-columns: auto minmax(0, 1fr); }
   .timeline-event > a { grid-column: 2; justify-self: start; }
   .run-card { grid-template-columns: 1fr; }
+  .obd-toolbar, .obd-connection-grid, .obd-vehicle-facts, .obd-live-grid, .obd-fault-grid, .obd-record-grid { grid-template-columns: 1fr; }
+  .obd-toolbar .capture-button, .obd-toolbar .plain-button { grid-column: 1; }
+  .obd-connection-grid > div, .obd-vehicle-facts > div, .obd-live-card, .obd-live-card:nth-child(3n), .obd-live-card:nth-child(4n), .obd-fault-grid > section, .obd-record-form, .obd-record-form:nth-child(2) { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .obd-connection-grid > div:last-child, .obd-vehicle-facts > div:last-child, .obd-fault-grid > section:last-child, .obd-record-form:last-child { border-bottom: 0; }
+  .obd-record-form:last-child { grid-column: auto; }
+  .obd-record-list article { grid-template-columns: 1fr; }
+  .obd-actions { width: 100%; }
+  .obd-tab-bar { min-width: 560px; }
   footer { flex-direction: column; }
 }

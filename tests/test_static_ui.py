@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 STATIC_DIR = ROOT / "remote_dan" / "static"
 EXPECTED_TABS = [
-    "overview", "bus-sniffer", "scope", "serial", "can", "modbus",
+    "overview", "bus-sniffer", "scope", "serial", "can", "obd", "modbus",
     "tests", "timeline", "evidence",
 ]
 
@@ -50,19 +50,21 @@ def parse_console() -> ConsoleParser:
     return parser
 
 
-def test_console_declares_nine_accessible_primary_tabs() -> None:
+def test_console_declares_ten_accessible_primary_tabs() -> None:
     parser = parse_console()
+    primary_tabs = [tab for tab in parser.tabs if "data-tab" in tab]
+    primary_panels = [panel for panel in parser.panels if "data-panel" in panel]
 
-    assert [tab["data-tab"] for tab in parser.tabs] == EXPECTED_TABS
+    assert [tab["data-tab"] for tab in primary_tabs] == EXPECTED_TABS
     assert all(
         tab["text"].lower().endswith(name.replace("-", " "))
-        for tab, name in zip(parser.tabs, EXPECTED_TABS, strict=True)
+        for tab, name in zip(primary_tabs, EXPECTED_TABS, strict=True)
     )
-    assert [panel["data-panel"] for panel in parser.panels] == EXPECTED_TABS
+    assert [panel["data-panel"] for panel in primary_panels] == EXPECTED_TABS
 
     for index, name in enumerate(EXPECTED_TABS):
-        tab = parser.tabs[index]
-        panel = parser.panels[index]
+        tab = primary_tabs[index]
+        panel = primary_panels[index]
         assert tab["id"] == f"tab-{name}"
         assert tab["aria-controls"] == f"panel-{name}"
         assert tab["aria-selected"] == ("true" if index == 0 else "false")
@@ -116,6 +118,49 @@ def test_readme_tour_link_uses_live_pages_url() -> None:
 
     assert expected in readme
     assert "](docs/console-tour.html)" not in readme
+
+
+def test_console_declares_accessible_obd_workspace_and_nested_tabs() -> None:
+    parser = parse_console()
+    obd_tabs = [tab for tab in parser.tabs if "data-obd-tab" in tab]
+    obd_panels = [panel for panel in parser.panels if "data-obd-panel" in panel]
+    names = ["live-data", "faults", "vehicle-info", "records"]
+
+    assert [tab["data-obd-tab"] for tab in obd_tabs] == names
+    assert [panel["data-obd-panel"] for panel in obd_panels] == names
+    for index, name in enumerate(names):
+        assert obd_tabs[index]["id"] == f"obd-tab-{name}"
+        assert obd_tabs[index]["aria-controls"] == f"obd-panel-{name}"
+        assert obd_tabs[index]["aria-selected"] == ("true" if index == 0 else "false")
+        assert obd_panels[index]["id"] == f"obd-panel-{name}"
+        assert obd_panels[index]["aria-labelledby"] == f"obd-tab-{name}"
+        assert ("hidden" in obd_panels[index]) is (index != 0)
+
+    required_ids = {
+        "obd-session-select", "obd-provider-mode", "obd-connect-button",
+        "obd-disconnect-button", "obd-connection-status", "obd-provider",
+        "obd-protocol", "obd-ecu-summary", "obd-live-list",
+        "obd-live-message", "obd-live-updated", "obd-live-save-button",
+        "obd-fault-refresh-button", "obd-fault-save-button", "obd-stored-list",
+        "obd-pending-list", "obd-permanent-list", "obd-readiness-list",
+        "obd-clear-button", "obd-clear-blocker", "obd-vehicle-refresh-button",
+        "obd-vehicle-save-button", "obd-vin", "obd-record-list",
+        "obd-customer-form", "obd-vehicle-form", "obd-session-form",
+        "obd-vehicle-make", "obd-vehicle-model",
+    }
+    assert required_ids <= parser.ids
+
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    obd_markup = index.split('id="panel-obd"', 1)[1].split('id="panel-modbus"', 1)[0]
+    assert "SAE J1979 emissions diagnostics" in obd_markup
+    assert "commissioned only for ISO 15765-4 CAN 11/500" in obd_markup
+    assert "does not prove the fault was repaired" in obd_markup
+    assert "readiness monitors" in obd_markup
+    assert "Permanent DTCs generally cannot be erased" in obd_markup
+    assert "authenticated operator identity" in obd_markup
+    assert 'id="obd-clear-button"' in obd_markup and "disabled" in obd_markup
+    assert 'id="obd-live-message" aria-live=' not in obd_markup
+    assert 'id="obd-vehicle-make-model"' not in obd_markup
 
 
 def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> None:
@@ -313,6 +358,27 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert 'profile: "network"' in script
     assert "preview_channels" in script
     assert "Legacy network preview withheld" in script
+    assert "function activateObdTab" in script
+    assert "function bindObdTabs" in script
+    assert "function loadObdRecords" in script
+    assert "function refreshObdStatus" in script
+    assert "function scheduleObdLivePoll" in script
+    assert "function stopObdLivePoll" in script
+    assert "function renderObdLiveData" in script
+    assert "function renderObdFaults" in script
+    assert "function renderObdVehicleInfo" in script
+    assert 'getJson("/api/obd/status")' in script
+    assert 'getJson("/api/obd/live"' in script
+    assert 'getJson("/api/obd/faults")' in script
+    assert 'getJson("/api/obd/vehicle-info")' in script
+    assert 'getJson("/api/obd/snapshots"' in script
+    assert "state.obd.pollTimer = window.setTimeout" in script
+    assert "state.obd.statusEpoch" in script
+    assert "epoch !== state.obd.statusEpoch" in script
+    assert "clearObdReadings" in script
+    assert "createOperationId()" in script
+    assert "operation_id: operationId" in script
+    assert "state.obd.savePending" in script
 
 
 def test_can_tab_exposes_accessible_bounded_existing_capture_decode_contract() -> None:
@@ -363,3 +429,42 @@ def test_can_tab_exposes_accessible_bounded_existing_capture_decode_contract() -
     assert "@media (max-width: 620px)" in styles
     assert "max-width: 100%" in styles
     assert "can-decode-v1" in index
+
+
+def test_console_styles_obd_workspace_for_desktop_and_mobile() -> None:
+    styles = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+
+    for selector in (
+        ".obd-toolbar", ".obd-connection-grid", ".obd-tab-bar",
+        ".obd-live-grid", ".obd-fault-grid", ".obd-record-grid",
+        ".obd-clear-panel", ".danger-button",
+    ):
+        assert selector in styles
+    assert "@media (max-width: 620px)" in styles
+    assert ".obd-tab-bar { min-width: 560px; }" in styles
+    assert ".obd-tab-bar { min-width: 0; grid-template-columns: 1fr 1fr; }" not in styles
+
+
+def test_obd_browser_code_fences_reads_recovers_polling_and_has_uuid_fallback() -> None:
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "faultsEpoch: 0" in script
+    assert "vehicleEpoch: 0" in script
+    assert "const requestEpoch = ++state.obd.faultsEpoch" in script
+    assert "const requestEpoch = ++state.obd.vehicleEpoch" in script
+    assert "nextDelay = 5000" in script
+    assert "function createOperationId()" in script
+    assert "cryptoApi.getRandomValues" in script
+    assert "state.obd.saveOperationIds = {}" in script
+    assert "const failedDtcStates" in script
+    assert "All DTC service reads failed" in script
+    assert "nextDelay ?? (state.obd.status?.connected ? 1200 : null)" in script
+
+
+def test_changed_static_assets_use_combined_release_cache_key() -> None:
+    markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert "/static/app.css?v=can-obd-v1" in markup
+    assert "/static/app.js?v=can-obd-v1" in markup
+    assert "/static/can_request_gate.js?v=can-decode-v1-remediation2" in markup
+    assert "bus-discovery-1" not in markup

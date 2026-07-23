@@ -214,6 +214,86 @@ def test_database_migrates_v1_without_losing_existing_evidence(tmp_path: Path) -
     migrated.close()
 
 
+def test_database_rejects_duplicate_legacy_vins_without_partial_migration(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "remote-dan.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("PRAGMA user_version = 1")
+        connection.executemany(
+            """
+            INSERT INTO assets (created_at, asset_type, display_name, vin_serial)
+            VALUES ('2026-07-23T00:00:00+00:00', 'vehicle', ?, ?)
+            """,
+            (("Vehicle A", "DUPLICATE123"), ("Vehicle B", " duplicate123 ")),
+        )
+
+    with pytest.raises(RuntimeError, match="duplicate legacy vehicle VIN"):
+        EvidenceDatabase(path).initialize()
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(diagnostic_cases)")
+        }
+        assert "customer_id" not in columns
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers'"
+        ).fetchone() is None
+
+
+def test_database_rejects_ambiguous_version_zero_with_existing_user_tables(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "remote-dan.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE legacy_unknown (id INTEGER PRIMARY KEY)")
+
+    with pytest.raises(RuntimeError, match="schema version 0"):
+        EvidenceDatabase(path).initialize()
+
+
+def test_database_initialize_is_idempotent_at_current_schema(tmp_path: Path) -> None:
+    path = tmp_path / "remote-dan.sqlite3"
+    database = EvidenceDatabase(path)
+    database.initialize()
+    database.initialize()
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_database_initialize_reconciles_connection_left_open_by_restart(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "remote-dan.sqlite3"
+    database = EvidenceDatabase(path)
+    database.initialize()
+    connection_id = database.create_obd_connection(
+        session_id=None,
+        provider="obd-simulator",
+        adapter_identity="fixture",
+        stable_path=None,
+        protocol="ISO 15765-4 CAN 11/500 (simulated)",
+        responder_ids=["7E8"],
+        voltage=13.8,
+    )
+
+    database.initialize()
+
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            "SELECT status, ended_at, error FROM obd_connections WHERE id = ?",
+            (connection_id,),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "error"
+    assert row[1] is not None
+    assert "service restart" in row[2]
+
+
 def test_database_creates_customer_vehicle_and_diagnostic_session_context(
     tmp_path: Path,
 ) -> None:
@@ -229,7 +309,7 @@ def test_database_creates_customer_vehicle_and_diagnostic_session_context(
     )
     vehicle_id = database.create_vehicle(
         display_name="2009 Subaru Forester",
-        vin="JF2SH63689G000000",
+        vin="RDLTEST0000000001",
         make="Subaru",
         model="Forester",
         year=2009,
@@ -250,12 +330,12 @@ def test_database_creates_customer_vehicle_and_diagnostic_session_context(
     assert isinstance(context["case_id"], int)
     assert isinstance(context["session_id"], int)
     assert database.list_customers()[0]["name"] == "Example Customer"
-    assert database.list_vehicles()[0]["vin"] == "JF2SH63689G000000"
+    assert database.list_vehicles()[0]["vin"] == "RDLTEST0000000001"
 
     with pytest.raises(ValueError, match="VIN already exists"):
         database.create_vehicle(
             display_name="Duplicate",
-            vin="jf2sh63689g000000",
+            vin="rdltest0000000001",
         )
 
 
@@ -267,7 +347,7 @@ def test_database_persists_obd_snapshot_dtc_and_live_value_lineage(
     customer_id = database.create_customer(name="Bench Customer")
     vehicle_id = database.create_vehicle(
         display_name="Forester",
-        vin="JF2SH63689G000001",
+        vin="RDLTEST0000000002",
     )
     context = database.create_diagnostic_session(
         customer_id=customer_id,
@@ -389,6 +469,47 @@ def test_database_obd_clear_events_are_append_only(tmp_path: Path) -> None:
     assert event is not None
     assert event["outcome"] == "simulated_success"
     assert event["response"] == {"7E8": "44"}
+
+    other_customer = database.create_customer(name="Other bench")
+    other_vehicle = database.create_vehicle(display_name="Other vehicle")
+    other = database.create_diagnostic_session(
+        customer_id=other_customer,
+        vehicle_id=other_vehicle,
+        title="Other clear audit",
+        purpose="Lineage isolation",
+    )
+    other_connection = database.create_obd_connection(
+        session_id=other["session_id"],
+        provider="obd-simulator",
+        adapter_identity="other simulator",
+        stable_path=None,
+        protocol="simulated ISO 15765-4",
+        responder_ids=["7E9"],
+        voltage=13.7,
+    )
+    other_snapshot = database.create_obd_snapshot(
+        connection_id=other_connection,
+        session_id=other["session_id"],
+        capture_id=None,
+        kind="faults",
+        provider="obd-simulator",
+        protocol="simulated ISO 15765-4",
+        raw_responses={},
+        parsed={},
+    )
+    with pytest.raises(ValueError, match="snapshot lineage"):
+        database.record_obd_clear_event(
+            session_id=context["session_id"],
+            connection_id=connection_id,
+            actor="Daniel",
+            confirmation_text="CLEAR 000002",
+            command="04",
+            before_snapshot_id=other_snapshot,
+            after_snapshot_id=None,
+            outcome="blocked",
+            response={},
+            ambiguous=True,
+        )
 
     connection = sqlite3.connect(path)
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):

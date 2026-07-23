@@ -15,6 +15,7 @@ Environment=REMOTE_DAN_PORT=8776
 Environment=REMOTE_DAN_DATA_DIR=/var/lib/remote-dan-lite/captures
 Environment=REMOTE_DAN_DB_PATH=/var/lib/remote-dan-lite/remote-dan.sqlite3
 Environment=MPLCONFIGDIR=/var/lib/remote-dan-lite/matplotlib
+EnvironmentFile=-/etc/remote-dan-lite/environment
 ExecStart=/opt/remote-dan-lite/.venv/bin/remote-dan-lite
 Restart=on-failure
 RestartSec=3

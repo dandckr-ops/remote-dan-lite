@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 import sqlite3
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 
 SCHEMA_VERSION = 2
@@ -137,7 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_test_results_capture_id ON test_results(capture_i
 """
 
 
-SCHEMA_V2_SQL = """
+CUSTOMER_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS customers (
     id INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -150,6 +150,10 @@ CREATE TABLE IF NOT EXISTS customers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name COLLATE NOCASE);
+"""
+
+
+SCHEMA_V2_SQL = """
 CREATE INDEX IF NOT EXISTS idx_cases_customer_id ON diagnostic_cases(customer_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicle_vin_unique
     ON assets(upper(trim(vin_serial)))
@@ -282,24 +286,90 @@ class EvidenceDatabase:
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
             current_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             if current_version > SCHEMA_VERSION:
                 raise RuntimeError(
                     f"database schema {current_version} is newer than supported {SCHEMA_VERSION}"
                 )
-            connection.executescript(SCHEMA_SQL)
-            case_columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(diagnostic_cases)")
-            }
-            if "customer_id" not in case_columns:
-                connection.execute(
-                    "ALTER TABLE diagnostic_cases ADD COLUMN customer_id INTEGER "
-                    "REFERENCES customers(id) ON DELETE RESTRICT"
+
+            user_tables = {
+                str(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT name FROM sqlite_master
+                    WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                    """
                 )
-            connection.executescript(SCHEMA_V2_SQL)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            }
+            if current_version == 0 and user_tables:
+                raise RuntimeError(
+                    "database has user tables but schema version 0; refusing ambiguous migration"
+                )
+
+            if current_version == 1:
+                duplicate_vins = connection.execute(
+                    """
+                    SELECT upper(trim(vin_serial)) AS normalized_vin, group_concat(id), count(*)
+                    FROM assets
+                    WHERE asset_type = 'vehicle'
+                      AND vin_serial IS NOT NULL
+                      AND length(trim(vin_serial)) > 0
+                    GROUP BY upper(trim(vin_serial))
+                    HAVING count(*) > 1
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if duplicate_vins is not None:
+                    raise RuntimeError(
+                        "duplicate legacy vehicle VIN prevents migration: "
+                        f"{duplicate_vins[0]} on asset ids {duplicate_vins[1]}"
+                    )
+
+            connection.execute("PRAGMA journal_mode = WAL")
+            if current_version < SCHEMA_VERSION:
+                case_columns = (
+                    {
+                        str(row[1])
+                        for row in connection.execute("PRAGMA table_info(diagnostic_cases)")
+                    }
+                    if current_version == 1
+                    else set()
+                )
+                baseline_sql = SCHEMA_SQL if current_version == 0 else ""
+                customer_column_sql = (
+                    ""
+                    if "customer_id" in case_columns
+                    else (
+                        "ALTER TABLE diagnostic_cases ADD COLUMN customer_id INTEGER "
+                        "REFERENCES customers(id) ON DELETE RESTRICT;"
+                    )
+                )
+                migration_sql = "\n".join(
+                    (
+                        "BEGIN IMMEDIATE;",
+                        baseline_sql,
+                        CUSTOMER_SCHEMA_SQL,
+                        customer_column_sql,
+                        SCHEMA_V2_SQL,
+                    )
+                )
+                connection.executescript(migration_sql)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+            foreign_key_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+            if foreign_key_violations:
+                raise RuntimeError(
+                    "database foreign-key check failed after schema initialization"
+                )
+            connection.execute(
+                """
+                UPDATE obd_connections
+                SET ended_at = ?, status = 'error',
+                    error = 'connection reconciled after service restart'
+                WHERE status = 'connected' AND ended_at IS NULL
+                """,
+                (_utc_now(),),
+            )
 
     def create_customer(
         self,
@@ -549,6 +619,13 @@ class EvidenceDatabase:
         voltage: float | None,
     ) -> int:
         with self._connect() as connection:
+            if session_id is not None:
+                session = connection.execute(
+                    "SELECT id FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                if session is None:
+                    raise ValueError("diagnostic session does not exist")
             cursor = connection.execute(
                 """
                 INSERT INTO obd_connections (
@@ -625,6 +702,169 @@ class EvidenceDatabase:
                 ),
             )
             return int(cursor.lastrowid)
+
+    def create_obd_evidence(
+        self,
+        *,
+        connection_id: int,
+        session_id: int,
+        run_id: str,
+        captured_at: str,
+        kind: str,
+        label: str,
+        provider: str,
+        protocol: str,
+        responder_ids: list[str],
+        sample_count: int,
+        raw_responses: dict[str, Any],
+        parsed: dict[str, Any],
+        dtcs: list[dict[str, Any]],
+        live_values: list[dict[str, Any]],
+        publish_artifacts: Callable[[int, int], list[dict[str, Any]]],
+        evidence_status: str = "complete",
+    ) -> tuple[int, int]:
+        """Persist one OBD evidence aggregate in a single database transaction."""
+        if evidence_status not in {"complete", "partial"}:
+            raise ValueError("OBD evidence status must be complete or partial")
+        with self._connect() as connection:
+            ownership = connection.execute(
+                """
+                SELECT session_id, status, ended_at, provider, protocol
+                FROM obd_connections WHERE id = ?
+                """,
+                (connection_id,),
+            ).fetchone()
+            if ownership is None or ownership["ended_at"] is not None:
+                raise ValueError("active OBD connection does not exist")
+            if ownership["status"] != "connected":
+                raise ValueError("OBD connection is not active")
+            if ownership["session_id"] != session_id:
+                raise ValueError("OBD connection and evidence session do not match")
+            if ownership["provider"] != provider or ownership["protocol"] != protocol:
+                raise ValueError("OBD connection identity does not match evidence")
+
+            capture_cursor = connection.execute(
+                """
+                INSERT INTO captures (
+                    session_id, run_id, captured_at, capture_type, label, backend,
+                    preset, samples, status, metadata_json
+                ) VALUES (?, ?, ?, 'obd_scan', ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    session_id,
+                    run_id,
+                    captured_at,
+                    label,
+                    provider,
+                    kind,
+                    sample_count,
+                    json.dumps(
+                        {"profile": "obd", "channels": responder_ids},
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            capture_id = int(capture_cursor.lastrowid)
+            snapshot_cursor = connection.execute(
+                """
+                INSERT INTO obd_snapshots (
+                    connection_id, session_id, capture_id, captured_at, kind,
+                    provider, protocol, status, raw_response_json, parsed_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    connection_id,
+                    session_id,
+                    capture_id,
+                    captured_at,
+                    kind,
+                    provider,
+                    protocol,
+                    evidence_status,
+                    json.dumps(raw_responses, sort_keys=True),
+                    json.dumps(parsed, sort_keys=True),
+                ),
+            )
+            snapshot_id = int(snapshot_cursor.lastrowid)
+
+            seen_dtcs: set[tuple[str, str, str]] = set()
+            dtc_rows: list[tuple[Any, ...]] = []
+            for item in dtcs:
+                key = (str(item["state"]), str(item["ecu"]), str(item["code"]))
+                if key in seen_dtcs:
+                    continue
+                seen_dtcs.add(key)
+                dtc_rows.append((snapshot_id, *key, item.get("description")))
+            connection.executemany(
+                """
+                INSERT INTO obd_dtc_records (
+                    snapshot_id, state, ecu, code, description
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                dtc_rows,
+            )
+            connection.executemany(
+                """
+                INSERT INTO obd_live_values (
+                    snapshot_id, pid, name, value, unit, ecu, sampled_at,
+                    fresh, raw_hex, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        snapshot_id,
+                        item["pid"],
+                        item["name"],
+                        item.get("value"),
+                        item.get("unit"),
+                        item["ecu"],
+                        item["sampled_at"],
+                        int(bool(item["fresh"])),
+                        item.get("raw_hex"),
+                        item.get("error"),
+                    )
+                    for item in live_values
+                ],
+            )
+
+            artifacts = publish_artifacts(capture_id, snapshot_id)
+            for artifact in artifacts:
+                filename = str(artifact["filename"])
+                relative_path = str(artifact["relative_path"])
+                if Path(filename).name != filename:
+                    raise ValueError("artifact filename must not contain a path")
+                if relative_path != f"{run_id}/{filename}":
+                    raise ValueError("artifact path does not match OBD run")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        capture_id, created_at, kind, filename, relative_path,
+                        media_type, size_bytes, sha256
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        capture_id,
+                        _utc_now(),
+                        artifact["kind"],
+                        filename,
+                        relative_path,
+                        artifact["media_type"],
+                        int(artifact["size_bytes"]),
+                        artifact["sha256"],
+                    ),
+                )
+            connection.execute(
+                "UPDATE captures SET status = ? WHERE id = ?",
+                (evidence_status, capture_id),
+            )
+            return capture_id, snapshot_id
+
+    def capture_exists_for_run(self, run_id: str) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM captures WHERE run_id = ?",
+                (run_id,),
+            ).fetchone() is not None
 
     def add_obd_dtcs(
         self,
@@ -752,7 +992,37 @@ class EvidenceDatabase:
         response: dict[str, Any],
         ambiguous: bool,
     ) -> int:
+        clean_actor = actor.strip()
+        clean_confirmation = confirmation_text.strip()
+        if not clean_actor or not clean_confirmation:
+            raise ValueError("clear audit actor and confirmation are required")
+        if command.strip().upper() != "04":
+            raise ValueError("clear audit command must be Mode 04")
         with self._connect() as connection:
+            connection_row = connection.execute(
+                "SELECT session_id FROM obd_connections WHERE id = ?",
+                (connection_id,),
+            ).fetchone()
+            if connection_row is None or connection_row["session_id"] != session_id:
+                raise ValueError("clear event connection lineage does not match session")
+            for snapshot_id in (before_snapshot_id, after_snapshot_id):
+                if snapshot_id is None:
+                    continue
+                snapshot_row = connection.execute(
+                    """
+                    SELECT session_id, connection_id, kind
+                    FROM obd_snapshots
+                    WHERE id = ?
+                    """,
+                    (snapshot_id,),
+                ).fetchone()
+                if (
+                    snapshot_row is None
+                    or snapshot_row["session_id"] != session_id
+                    or snapshot_row["connection_id"] != connection_id
+                    or snapshot_row["kind"] != "faults"
+                ):
+                    raise ValueError("clear event snapshot lineage is invalid")
             cursor = connection.execute(
                 """
                 INSERT INTO obd_clear_events (
@@ -765,9 +1035,9 @@ class EvidenceDatabase:
                     session_id,
                     connection_id,
                     _utc_now(),
-                    actor,
-                    confirmation_text,
-                    command,
+                    clean_actor,
+                    clean_confirmation,
+                    "04",
                     before_snapshot_id,
                     after_snapshot_id,
                     outcome,
@@ -1018,6 +1288,22 @@ class EvidenceDatabase:
     def delete_capture(self, capture_id: int) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM captures WHERE id = ?", (capture_id,))
+
+    def get_artifact_by_relative_path(self, relative_path: str) -> dict[str, Any] | None:
+        """Return an artifact only after its database transaction is committed."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, capture_id, kind, filename, relative_path,
+                       media_type, size_bytes, sha256
+                FROM artifacts
+                WHERE relative_path = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (relative_path,),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def get_capture(self, capture_id: int) -> dict[str, Any] | None:
         with self._connect() as connection:

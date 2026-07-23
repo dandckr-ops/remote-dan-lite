@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=can-decode-v1">
+  <link rel="stylesheet" href="/static/app.css?v=can-obd-v1">
 </head>
 <body>
   <div class="shell">
@@ -29,10 +29,11 @@
       <button class="tab-button" type="button" role="tab" id="tab-scope" data-tab="scope" aria-controls="panel-scope" aria-selected="false" tabindex="-1"><span>03</span>Scope</button>
       <button class="tab-button" type="button" role="tab" id="tab-serial" data-tab="serial" aria-controls="panel-serial" aria-selected="false" tabindex="-1"><span>04</span>Serial</button>
       <button class="tab-button" type="button" role="tab" id="tab-can" data-tab="can" aria-controls="panel-can" aria-selected="false" tabindex="-1"><span>05</span>CAN</button>
-      <button class="tab-button" type="button" role="tab" id="tab-modbus" data-tab="modbus" aria-controls="panel-modbus" aria-selected="false" tabindex="-1"><span>06</span>Modbus</button>
-      <button class="tab-button" type="button" role="tab" id="tab-tests" data-tab="tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1"><span>07</span>Tests</button>
-      <button class="tab-button" type="button" role="tab" id="tab-timeline" data-tab="timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><span>08</span>Timeline</button>
-      <button class="tab-button" type="button" role="tab" id="tab-evidence" data-tab="evidence" aria-controls="panel-evidence" aria-selected="false" tabindex="-1"><span>09</span>Evidence</button>
+      <button class="tab-button" type="button" role="tab" id="tab-obd" data-tab="obd" aria-controls="panel-obd" aria-selected="false" tabindex="-1"><span>06</span>OBD</button>
+      <button class="tab-button" type="button" role="tab" id="tab-modbus" data-tab="modbus" aria-controls="panel-modbus" aria-selected="false" tabindex="-1"><span>07</span>Modbus</button>
+      <button class="tab-button" type="button" role="tab" id="tab-tests" data-tab="tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1"><span>08</span>Tests</button>
+      <button class="tab-button" type="button" role="tab" id="tab-timeline" data-tab="timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><span>09</span>Timeline</button>
+      <button class="tab-button" type="button" role="tab" id="tab-evidence" data-tab="evidence" aria-controls="panel-evidence" aria-selected="false" tabindex="-1"><span>10</span>Evidence</button>
       </div>
     </nav>
 
@@ -376,9 +377,123 @@
         </section>
       </section>
 
+      <section class="tab-panel" id="panel-obd" role="tabpanel" aria-labelledby="tab-obd" data-panel="obd" hidden>
+        <section class="panel obd-connection-panel" aria-labelledby="obd-heading">
+          <div class="panel-heading">
+            <div><span class="section-number">06</span><h2 id="obd-heading">Generic OBD workspace</h2></div>
+            <span class="status-label planned" id="obd-connection-status">Disconnected</span>
+          </div>
+          <p class="obd-boundary">SAE J1979 emissions diagnostics through the direct OBDLink SX path. Hardware v1 is commissioned only for ISO 15765-4 CAN 11/500. This is not full Subaru ABS, SRS, EyeSight, body, coding, or programming support.</p>
+          <div class="obd-toolbar">
+            <label class="field"><span>Diagnostic session</span><select id="obd-session-select"><option value="">No session selected</option></select></label>
+            <label class="field"><span>Provider</span><select id="obd-provider-mode"><option value="simulator">Simulator</option><option value="hardware">OBDLink SX · direct USB</option></select></label>
+            <button class="capture-button" id="obd-connect-button" type="button"><span class="button-mark"></span>Connect</button>
+            <button class="plain-button" id="obd-disconnect-button" type="button" disabled>Disconnect</button>
+          </div>
+          <div class="message" id="obd-message" aria-live="polite">Select a session for durable evidence, then connect.</div>
+          <dl class="obd-connection-grid">
+            <div><dt>Provider</dt><dd id="obd-provider">—</dd></div>
+            <div><dt>Protocol</dt><dd id="obd-protocol">—</dd></div>
+            <div><dt>ECU responders</dt><dd id="obd-ecu-summary">—</dd></div>
+            <div><dt>Supply</dt><dd id="obd-voltage">—</dd></div>
+          </dl>
+        </section>
+
+        <nav class="obd-subnav" aria-label="OBD views">
+          <div class="obd-tab-bar" role="tablist" aria-label="OBD workspaces">
+            <button type="button" role="tab" id="obd-tab-live-data" data-obd-tab="live-data" aria-controls="obd-panel-live-data" aria-selected="true" tabindex="0">Live Data</button>
+            <button type="button" role="tab" id="obd-tab-faults" data-obd-tab="faults" aria-controls="obd-panel-faults" aria-selected="false" tabindex="-1">Faults</button>
+            <button type="button" role="tab" id="obd-tab-vehicle-info" data-obd-tab="vehicle-info" aria-controls="obd-panel-vehicle-info" aria-selected="false" tabindex="-1">Vehicle Info</button>
+            <button type="button" role="tab" id="obd-tab-records" data-obd-tab="records" aria-controls="obd-panel-records" aria-selected="false" tabindex="-1">Records</button>
+          </div>
+        </nav>
+
+        <section class="panel obd-subpanel" id="obd-panel-live-data" role="tabpanel" aria-labelledby="obd-tab-live-data" data-obd-panel="live-data">
+          <div class="panel-heading">
+            <div><span class="section-number">06A</span><h2>Live Data</h2></div>
+            <button class="plain-button" id="obd-live-save-button" type="button" disabled>Read and save</button>
+          </div>
+          <div class="message" id="obd-live-message">Connect to begin bounded live polling.</div>
+          <p class="obd-updated" id="obd-live-updated">Last update: —</p>
+          <div id="obd-live-list" class="obd-live-grid" role="list"><p class="empty-list">No live values loaded.</p></div>
+        </section>
+
+        <section class="panel obd-subpanel" id="obd-panel-faults" role="tabpanel" aria-labelledby="obd-tab-faults" data-obd-panel="faults" hidden>
+          <div class="panel-heading">
+            <div><span class="section-number">06B</span><h2>Faults and readiness</h2></div>
+            <div class="obd-actions"><button class="plain-button" id="obd-fault-refresh-button" type="button" disabled>Read faults</button><button class="plain-button" id="obd-fault-save-button" type="button" disabled>Read and save</button></div>
+          </div>
+          <div class="message" id="obd-fault-message" aria-live="polite">No fault snapshot loaded.</div>
+          <section class="obd-readiness" aria-labelledby="obd-readiness-heading">
+            <h3 id="obd-readiness-heading">MIL and readiness monitors</h3>
+            <div id="obd-readiness-list"><p class="empty-list">No readiness response loaded.</p></div>
+          </section>
+          <div class="obd-fault-grid">
+            <section aria-labelledby="obd-stored-heading"><h3 id="obd-stored-heading">Stored <span id="obd-stored-count">0</span></h3><ul id="obd-stored-list"><li>No stored DTCs loaded.</li></ul></section>
+            <section aria-labelledby="obd-pending-heading"><h3 id="obd-pending-heading">Pending <span id="obd-pending-count">0</span></h3><ul id="obd-pending-list"><li>No pending DTCs loaded.</li></ul></section>
+            <section aria-labelledby="obd-permanent-heading"><h3 id="obd-permanent-heading">Permanent <span id="obd-permanent-count">0</span></h3><ul id="obd-permanent-list"><li>No permanent DTCs loaded.</li></ul></section>
+          </div>
+          <section class="obd-clear-panel" aria-labelledby="obd-clear-heading">
+            <h3 id="obd-clear-heading">Clear emissions diagnostic information · Mode $04</h3>
+            <p>Clearing codes does not prove the fault was repaired. It can erase stored emissions DTCs, freeze-frame and test information, and reset readiness monitors to incomplete.</p>
+            <p>Permanent DTCs generally cannot be erased with Mode $04; they clear only after the monitor verifies the repair.</p>
+            <p id="obd-clear-blocker" class="safety-warning">Blocked: Remote Dan Lite does not yet have the authenticated operator identity required for a defensible clear audit.</p>
+            <button class="danger-button" id="obd-clear-button" type="button" disabled>Clear disabled</button>
+          </section>
+        </section>
+
+        <section class="panel obd-subpanel" id="obd-panel-vehicle-info" role="tabpanel" aria-labelledby="obd-tab-vehicle-info" data-obd-panel="vehicle-info" hidden>
+          <div class="panel-heading">
+            <div><span class="section-number">06C</span><h2>Vehicle Info</h2></div>
+            <div class="obd-actions"><button class="plain-button" id="obd-vehicle-refresh-button" type="button" disabled>Read vehicle info</button><button class="plain-button" id="obd-vehicle-save-button" type="button" disabled>Read and save</button></div>
+          </div>
+          <div class="message" id="obd-vehicle-message" aria-live="polite">No Mode $09 vehicle information loaded.</div>
+          <dl class="obd-vehicle-facts">
+            <div><dt>VIN reported by ECU</dt><dd id="obd-vin">—</dd></div>
+            <div><dt>VIN source ECU</dt><dd id="obd-vin-ecu">—</dd></div>
+            <div><dt>Protocol</dt><dd id="obd-vehicle-protocol">—</dd></div>
+            <div><dt>Adapter</dt><dd id="obd-adapter-identity">—</dd></div>
+            <div><dt>Detected ECUs</dt><dd id="obd-ecu-list">—</dd></div>
+          </dl>
+        </section>
+
+        <section class="panel obd-subpanel" id="obd-panel-records" role="tabpanel" aria-labelledby="obd-tab-records" data-obd-panel="records" hidden>
+          <div class="panel-heading"><div><span class="section-number">06D</span><h2>Customer, vehicle, and session records</h2></div><button class="plain-button" id="obd-record-refresh-button" type="button">Refresh</button></div>
+          <div class="obd-record-grid">
+            <form id="obd-customer-form" class="obd-record-form">
+              <h3>New customer</h3>
+              <label class="field"><span>Name</span><input id="obd-customer-name" required maxlength="120" autocomplete="name"></label>
+              <label class="field"><span>Company</span><input id="obd-customer-company" maxlength="120" autocomplete="organization"></label>
+              <label class="field"><span>Phone</span><input id="obd-customer-phone" maxlength="40" autocomplete="tel"></label>
+              <label class="field"><span>Email</span><input id="obd-customer-email" type="email" maxlength="254" autocomplete="email"></label>
+              <button class="plain-button" type="submit">Create customer</button>
+            </form>
+            <form id="obd-vehicle-form" class="obd-record-form">
+              <h3>New vehicle</h3>
+              <label class="field"><span>Display name</span><input id="obd-vehicle-name" required maxlength="120"></label>
+              <label class="field"><span>VIN</span><input id="obd-vehicle-vin" maxlength="32" autocapitalize="characters"></label>
+              <label class="field"><span>Make</span><input id="obd-vehicle-make" maxlength="80"></label>
+              <label class="field"><span>Model</span><input id="obd-vehicle-model" maxlength="80"></label>
+              <label class="field"><span>Year</span><input id="obd-vehicle-year" type="number" min="1886" max="2200"></label>
+              <button class="plain-button" type="submit">Create vehicle</button>
+            </form>
+            <form id="obd-session-form" class="obd-record-form">
+              <h3>New diagnostic session</h3>
+              <label class="field"><span>Customer</span><select id="obd-session-customer" required><option value="">Select customer</option></select></label>
+              <label class="field"><span>Vehicle</span><select id="obd-session-vehicle" required><option value="">Select vehicle</option></select></label>
+              <label class="field"><span>Title</span><input id="obd-session-title" required maxlength="120" value="OBD diagnosis"></label>
+              <label class="field"><span>Purpose</span><input id="obd-session-purpose" required maxlength="240" value="Generic emissions diagnosis"></label>
+              <button class="plain-button" type="submit">Create session</button>
+            </form>
+          </div>
+          <div class="message" id="obd-record-message" aria-live="polite">Records are stored locally with the shared evidence database.</div>
+          <div id="obd-record-list" class="obd-record-list"><p class="empty-list">No diagnostic sessions loaded.</p></div>
+        </section>
+      </section>
+
       <section class="tab-panel" id="panel-modbus" role="tabpanel" aria-labelledby="tab-modbus" data-panel="modbus" hidden>
         <section class="panel modbus-scan-panel">
-          <div class="panel-heading"><div><span class="section-number">06</span><h2>Connected-network discovery</h2></div><span class="status-label live">Read only</span></div>
+          <div class="panel-heading"><div><span class="section-number">07</span><h2>Connected-network discovery</h2></div><span class="status-label live">Read only</span></div>
           <form id="modbus-scan-form" class="modbus-scan-form">
             <label class="field"><span>Evidence label</span><input id="modbus-label" maxlength="80" value="connected Modbus network" autocomplete="off"></label>
             <label class="field"><span>Interface and connected subnet</span><select id="modbus-subnet"><option value="">Loading interfaces…</option></select></label>
@@ -395,18 +510,18 @@
           <article class="panel metric"><span>Writes performed</span><strong id="modbus-write-count">0</strong><small>Not implemented</small></article>
         </div>
         <section class="panel modbus-inventory-panel">
-          <div class="panel-heading"><div><span class="section-number">06A</span><h2>Device inventory</h2></div><a id="modbus-report" class="text-link hidden" href="#">Open Field Journal PDF</a></div>
+          <div class="panel-heading"><div><span class="section-number">07A</span><h2>Device inventory</h2></div><a id="modbus-report" class="text-link hidden" href="#">Open Field Journal PDF</a></div>
           <div id="modbus-device-list" class="modbus-device-list"><p class="empty-list">No Modbus discovery evidence loaded.</p></div>
         </section>
         <section class="preview panel">
-          <div class="panel-heading"><div><span class="section-number">06B</span><h2>Network evidence</h2></div></div>
+          <div class="panel-heading"><div><span class="section-number">07B</span><h2>Network evidence</h2></div></div>
           <div class="scope-grid"><div class="empty-preview" id="modbus-empty-preview"><div class="reticle"></div><strong>No network scan loaded</strong><span>Every scan retains inventory CSV, safe parsed JSON, PNG, PDF, and hashes.</span></div><img id="modbus-overview" class="overview hidden" alt="Read-only Modbus network discovery overview"></div>
         </section>
       </section>
 
       <section class="tab-panel" id="panel-tests" role="tabpanel" aria-labelledby="tab-tests" data-panel="tests" hidden>
         <section class="panel commissioned-panel">
-          <div class="panel-heading"><div><span class="section-number">07</span><h2>Guided tests</h2></div><span class="status-label planned">Framework ready</span></div>
+          <div class="panel-heading"><div><span class="section-number">08</span><h2>Guided tests</h2></div><span class="status-label planned">Framework ready</span></div>
           <div class="test-grid">
             <article><strong>Relative compression</strong><span>Connection → signal check → bounded capture → calculation → findings</span><small>Not commissioned</small></article>
             <article><strong>Cylinder contribution</strong><span>Shared capture engines with explicit stimulus authority</span><small>Not commissioned</small></article>
@@ -417,17 +532,17 @@
       </section>
 
       <section class="tab-panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" data-panel="timeline" hidden>
-        <section class="panel"><div class="panel-heading"><div><span class="section-number">08</span><h2>Capture timeline</h2></div><p>Newest first · shared evidence state</p></div><div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div></section>
+        <section class="panel"><div class="panel-heading"><div><span class="section-number">09</span><h2>Capture timeline</h2></div><p>Newest first · shared evidence state</p></div><div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div></section>
       </section>
 
       <section class="tab-panel" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence" data-panel="evidence" hidden>
-        <section class="runs panel"><div class="panel-heading"><div><span class="section-number">09</span><h2>Field Journal</h2></div><button id="refresh" class="plain-button" type="button">Refresh</button></div><div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div></section>
+        <section class="runs panel"><div class="panel-heading"><div><span class="section-number">10</span><h2>Field Journal</h2></div><button id="refresh" class="plain-button" type="button">Refresh</button></div><div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div></section>
       </section>
     </main>
 
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
   <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=can-decode-v1-remediation2" defer></script>
+  <script src="/static/app.js?v=can-obd-v1" defer></script>
 </body>
 </html>
