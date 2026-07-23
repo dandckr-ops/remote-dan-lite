@@ -266,3 +266,26 @@ def test_aggregate_analysis_adds_validated_frames_for_supplied_orientation() -> 
     assert result["frames"][0]["identifier"] == 0x456
     assert result["identifiers"][0]["last_payload_hex"] == "1020"
     assert result["rejected_candidate_count"] == 0
+
+
+def test_fixed_independent_wire_vectors_cover_terminal_stuff_ack_and_extended_r1() -> None:
+    # Fixed independent-reviewer reproduction vectors. These are raw Classical CAN
+    # wire bits, not generated at runtime and make no OEM/DBC claim.
+    dominant_ack = "00000100000100000100010001110100000100111000001101111111111"
+    recessive_ack = "00000100000100000100010001110100000100111000001111111111111"
+    malformed_extended_r1 = (
+        "0110001111001100000100100000100001010000011101000110001101011111111111"
+    )
+
+    for vector in (dominant_ack, recessive_ack):
+        raw = [int(bit) for bit in vector]
+        result = decode_can_waveform(*_render([(0, raw), (20, raw), (20, raw)]))
+        assert {
+            (frame["identifier"], frame["payload_hex"]) for frame in result["frames"]
+        } == {(0x000, "1D")}
+
+    rejected = decode_can_waveform(
+        *_render([(0, [int(bit) for bit in malformed_extended_r1])])
+    )
+    assert rejected["frames"] == []
+    assert rejected["rejected_candidate_count"] >= 1

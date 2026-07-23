@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import socket
@@ -21,11 +22,17 @@ from remote_dan.bus_survey import (
     PicoBusSurveyBackend,
 )
 from remote_dan.can_decode import (
+    MAX_FRAME_LINE_BYTES,
+    MAX_FRAMES_JSONL_BYTES,
+    MAX_MANIFEST_BYTES,
+    MAX_SCANNED_FRAME_LINES,
+    MAX_SUMMARY_BYTES,
     RUN_ID_PATTERN,
     CanDecodeManager,
     CanDecodeRequest,
     CanDecodeSourceNotFound,
     eligible_bus_survey_classification,
+    read_authoritative_artifact,
     validated_artifact_path,
 )
 from remote_dan.capture import (
@@ -190,12 +197,25 @@ def _scope_channel_overrides(payload: CapturePayload) -> tuple[ScopeChannelConfi
     )
 
 
-def _list_manifests(data_dir: Path) -> list[dict[str, object]]:
+def _list_manifests(
+    data_dir: Path,
+    database: EvidenceDatabase,
+) -> list[dict[str, object]]:
     manifests: list[dict[str, object]] = []
-    for path in sorted(data_dir.glob("*/manifest.json"), reverse=True):
+    for record in database.list_complete_captures(limit=200):
         try:
-            manifests.append(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
+            data = read_authoritative_artifact(
+                data_dir, record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
+            )
+            manifest = json.loads(data)
+            if (
+                not isinstance(manifest, dict)
+                or manifest.get("run_id") != record.get("run_id")
+                or manifest.get("capture_type") != record.get("capture_type")
+            ):
+                continue
+            manifests.append(manifest)
+        except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             continue
     return manifests
 
@@ -210,8 +230,9 @@ def _list_can_decode_sources(
         limit=200,
     ):
         try:
-            manifest_path = validated_artifact_path(data_dir, record, "manifest.json")
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = json.loads(read_authoritative_artifact(
+                data_dir, record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
+            ))
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             continue
         capture_type = manifest.get("capture_type")
@@ -376,7 +397,7 @@ def create_app(
 
     @app.get("/api/captures")
     def captures() -> list[dict[str, object]]:
-        return _list_manifests(capture_dir)
+        return _list_manifests(capture_dir, database)
 
     @app.get("/api/can-decode-sources")
     def can_decode_sources() -> dict[str, object]:
@@ -424,30 +445,39 @@ def create_app(
                 or record.get("capture_type") != "can_decode"
             ):
                 raise ValueError("not an authoritative CAN decode")
-            required = {
-                filename: validated_artifact_path(capture_dir, record, filename)
-                for filename in (
-                    "frames.jsonl",
-                    "identifiers.csv",
-                    "summary.json",
-                    "manifest.json",
-                )
-            }
-            manifest_path = required["manifest.json"]
-            summary_path = required["summary.json"]
-            frames_path = required["frames.jsonl"]
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            frames_bytes = read_authoritative_artifact(
+                capture_dir, record, "frames.jsonl", max_bytes=MAX_FRAMES_JSONL_BYTES
+            )
+            read_authoritative_artifact(
+                capture_dir, record, "identifiers.csv", max_bytes=MAX_SUMMARY_BYTES
+            )
+            summary = json.loads(read_authoritative_artifact(
+                capture_dir, record, "summary.json", max_bytes=MAX_SUMMARY_BYTES
+            ))
+            manifest = json.loads(read_authoritative_artifact(
+                capture_dir, record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
+            ))
             if (
-                manifest.get("capture_type") != "can_decode"
+                not isinstance(manifest, dict)
+                or not isinstance(summary, dict)
+                or manifest.get("capture_type") != "can_decode"
                 or manifest.get("run_id") != run_id
             ):
                 raise OSError("not a CAN decode")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         all_identifiers = summary.get("identifiers", [])
-        if not isinstance(all_identifiers, list):
-            all_identifiers = []
+        if not isinstance(all_identifiers, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("identifier"), int)
+            or isinstance(item.get("identifier"), bool)
+            or not isinstance(item.get("extended"), bool)
+            or not isinstance(item.get("identifier_hex"), str)
+            or not isinstance(item.get("payload_change_count"), int)
+            or isinstance(item.get("payload_change_count"), bool)
+            for item in all_identifiers
+        ):
+            raise HTTPException(status_code=404, detail="CAN decode not found")
 
         def identifier_matches(item: dict[str, object]) -> bool:
             normalized = str(item.get("identifier_hex", "")).lower().removeprefix("0x")
@@ -466,20 +496,47 @@ def create_app(
         frames: list[dict[str, object]] = []
         total_frames = 0
         try:
-            with frames_path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    frame = json.loads(line)
-                    if not isinstance(frame, dict) or not identifier_matches(frame):
-                        continue
-                    if changing_only and (
-                        int(frame.get("identifier", -1)),
-                        bool(frame.get("extended")),
-                    ) not in changing_keys:
-                        continue
-                    total_frames += 1
-                    if len(frames) < 200:
-                        frames.append(frame)
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            lines = frames_bytes.splitlines()
+            if len(lines) > MAX_SCANNED_FRAME_LINES:
+                raise ValueError("too many CAN frame rows")
+            for line in lines:
+                if not line or len(line) > MAX_FRAME_LINE_BYTES:
+                    raise ValueError("invalid CAN frame line size")
+                frame = json.loads(line)
+                if (
+                    not isinstance(frame, dict)
+                    or not isinstance(frame.get("identifier"), int)
+                    or isinstance(frame.get("identifier"), bool)
+                    or not 0 <= frame.get("identifier", -1) <= 0x1FFFFFFF
+                    or not isinstance(frame.get("identifier_hex"), str)
+                    or not isinstance(frame.get("extended"), bool)
+                    or not isinstance(frame.get("timestamp_us"), (int, float))
+                    or isinstance(frame.get("timestamp_us"), bool)
+                    or not math.isfinite(float(frame.get("timestamp_us", 0)))
+                    or not isinstance(frame.get("dlc"), int)
+                    or isinstance(frame.get("dlc"), bool)
+                    or not 0 <= frame.get("dlc", -1) <= 15
+                    or not isinstance(frame.get("payload_hex"), str)
+                    or len(frame.get("payload_hex", "")) > 16
+                    or len(frame.get("payload_hex", "")) % 2 != 0
+                    or any(
+                        character not in "0123456789abcdefABCDEF"
+                        for character in frame.get("payload_hex", "")
+                    )
+                    or frame.get("crc_valid") is not True
+                ):
+                    raise ValueError("malformed CAN frame row")
+                if not identifier_matches(frame):
+                    continue
+                if changing_only and (
+                    int(frame.get("identifier", -1)),
+                    bool(frame.get("extended")),
+                ) not in changing_keys:
+                    continue
+                total_frames += 1
+                if len(frames) < 200:
+                    frames.append(frame)
+        except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         identifiers = filtered_identifiers[:200]
         total_identifiers = len(filtered_identifiers)

@@ -195,6 +195,12 @@ def test_child_decode_preserves_source_and_registers_hashed_lineage(tmp_path: Pa
     assert manifest["source_sha256"] == source_sha
     assert manifest["writes_performed"] == 0
     assert manifest["frame_count"] == 3
+    assert manifest["backend"] == "can-decoder-v1"
+    assert manifest["profile"] == "can-decode"
+    assert manifest["preset"] == "500000bps"
+    assert manifest["samples"] == 3
+    assert manifest["sample_interval_us"] == pytest.approx(0.1)
+    assert manifest["duration_ms"] > 0
     assert manifest["identifier_count"] == 2
     assert manifest["rejected_candidate_count"] == 0
     assert manifest["can_polarity"] == "expected"
@@ -205,7 +211,9 @@ def test_child_decode_preserves_source_and_registers_hashed_lineage(tmp_path: Pa
     for filename, digest in manifest["sha256"].items():
         assert _sha256(child_dir / filename) == digest
     frames = [json.loads(line) for line in (child_dir / "frames.jsonl").read_text().splitlines()]
-    assert [frame["identifier"] for frame in frames] == [0x100, 0x100, 0x200]
+    assert [frame["timestamp_us"] for frame in frames] == sorted(
+        frame["timestamp_us"] for frame in frames
+    )
     saved = database.get_capture(int(manifest["capture_id"]))
     assert saved is not None
     assert saved["capture_type"] == "can_decode"
@@ -373,6 +381,31 @@ def test_source_hash_and_sqlite_run_id_are_authoritative(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="size|hash"):
         CanDecodeManager(root, database=database).run(
             CanDecodeRequest(source_run_id="tampered-source", label="reject tamper")
+        )
+
+
+@pytest.mark.parametrize("replacement", ("symlink", "directory"))
+def test_source_artifact_open_rejects_symlink_and_non_regular_replacements(
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    root = tmp_path / "captures"
+    database = EvidenceDatabase(tmp_path / "evidence.sqlite3")
+    database.initialize()
+    source_dir, _ = _source_capture(root, database)
+    waveform = source_dir / "capture.csv"
+    original = tmp_path / "original.csv"
+    waveform.rename(original)
+    if replacement == "symlink":
+        waveform.symlink_to(original)
+        message = "symlink"
+    else:
+        waveform.mkdir()
+        message = "regular file"
+
+    with pytest.raises(ValueError, match=message):
+        CanDecodeManager(root, database=database).run(
+            CanDecodeRequest(source_run_id="source-can-001", label="reject replacement")
         )
 
 

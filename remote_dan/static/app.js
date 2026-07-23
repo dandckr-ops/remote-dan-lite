@@ -15,6 +15,7 @@ const state = {
   },
   canDecode: null,
 };
+const canDecodeRequestGate = CanRequestGate.createLatestRequestGate();
 
 const tabs = $$('[role="tab"][data-tab]');
 const panels = $$('[role="tabpanel"][data-panel]');
@@ -857,6 +858,7 @@ async function loadCanDecodeSources() {
 }
 
 async function loadCanDecodeResult(runId) {
+  const requestGeneration = canDecodeRequestGate.begin();
   if (!runId) return;
   try {
     const query = new URLSearchParams();
@@ -864,14 +866,20 @@ async function loadCanDecodeResult(runId) {
     if (identifier) query.set("identifier", identifier);
     if ($("#can-changing-only").checked) query.set("changing_only", "true");
     const suffix = query.size ? `?${query.toString()}` : "";
-    state.canDecode = await getJson(`/api/can-decodes/${encodeURIComponent(runId)}${suffix}`);
+    const result = await getJson(`/api/can-decodes/${encodeURIComponent(runId)}${suffix}`);
+    if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
+    state.canDecode = result;
     renderCanDecode();
   } catch (error) {
+    if (!canDecodeRequestGate.isCurrent(requestGeneration)) return;
     setMessage("#can-decode-message", `Could not load CAN decode result: ${error.message}`, "error");
   }
 }
 
 function bindCanDecodeForm() {
+  $("#can-decode-source").addEventListener("change", () => {
+    canDecodeRequestGate.invalidate();
+  });
   $("#can-decode-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = $("#can-decode-button");

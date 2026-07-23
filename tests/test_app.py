@@ -6,7 +6,9 @@ import json
 import shutil
 
 from fastapi.testclient import TestClient
+import pytest
 
+import remote_dan.app as app_module
 from remote_dan.app import create_app
 from remote_dan.capture import SimulatorBackend
 from remote_dan.modbus_scan import ModbusSimulatorBackend
@@ -602,15 +604,21 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
             "identifier": 0x100,
             "identifier_hex": "0x100",
             "extended": False,
+            "timestamp_us": float(index),
+            "dlc": 1,
             "payload_hex": "00",
+            "crc_valid": True,
         }
-        for _ in range(205)
+        for index in range(205)
     ]
     frames.append({
         "identifier": 0x321,
         "identifier_hex": "0x321",
         "extended": False,
+        "timestamp_us": 205.0,
+        "dlc": 1,
         "payload_hex": "AA",
+        "crc_valid": True,
     })
     (run_dir / "frames.jsonl").write_text(
         "".join(json.dumps(frame) + "\n" for frame in frames),
@@ -675,3 +683,93 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
     assert [frame["identifier_hex"] for frame in filtered["frames"]] == ["0x321"]
     assert filtered["total_frame_count"] == filtered["returned_frame_count"] == 1
     assert [item["identifier_hex"] for item in changing["identifiers"]] == ["0x321"]
+
+
+def test_capture_listing_publishes_only_complete_verified_database_manifests(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    created = client.post("/api/captures", json={
+        "label": "publication boundary",
+        "preset": "short",
+        "mode": "simulator",
+    }).json()
+    capture_id = int(created["capture_id"])
+
+    app.state.database.set_capture_status(capture_id, "pending")
+    assert created["run_id"] not in {
+        item["run_id"] for item in client.get("/api/captures").json()
+    }
+    app.state.database.set_capture_status(capture_id, "complete")
+    assert created["run_id"] in {
+        item["run_id"] for item in client.get("/api/captures").json()
+    }
+
+    manifest_path = capture_root / created["run_id"] / "manifest.json"
+    manifest_path.write_text(manifest_path.read_text() + " ", encoding="utf-8")
+    assert created["run_id"] not in {
+        item["run_id"] for item in client.get("/api/captures").json()
+    }
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ("summary_bytes", "frames_bytes", "line_count", "line_bytes", "malformed_frame"),
+)
+def test_can_decode_result_artifact_bounds_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "bounded CAN source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    child = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"],
+        "label": "bounded child",
+    }).json()
+    run_dir = capture_root / child["run_id"]
+    target = run_dir / ("summary.json" if failure == "summary_bytes" else "frames.jsonl")
+    if failure == "summary_bytes":
+        monkeypatch.setattr(app_module, "MAX_SUMMARY_BYTES", target.stat().st_size - 1)
+    elif failure == "frames_bytes":
+        monkeypatch.setattr(app_module, "MAX_FRAMES_JSONL_BYTES", target.stat().st_size - 1)
+    elif failure == "line_count":
+        monkeypatch.setattr(
+            app_module, "MAX_SCANNED_FRAME_LINES",
+            len(target.read_bytes().splitlines()) - 1,
+        )
+    elif failure == "line_bytes":
+        monkeypatch.setattr(
+            app_module, "MAX_FRAME_LINE_BYTES",
+            max(len(line) for line in target.read_bytes().splitlines()) - 1,
+        )
+    else:
+        lines = target.read_bytes().splitlines()
+        lines[0] = b"{}"
+        target.write_bytes(b"\n".join(lines) + b"\n")
+        with app.state.database._connect() as connection:
+            connection.execute(
+                """
+                UPDATE artifacts SET size_bytes = ?, sha256 = ?
+                WHERE capture_id = ? AND filename = 'frames.jsonl'
+                """,
+                (
+                    target.stat().st_size,
+                    hashlib.sha256(target.read_bytes()).hexdigest(),
+                    child["capture_id"],
+                ),
+            )
+
+    response = client.get(f"/api/can-decodes/{child['run_id']}")
+    assert response.status_code == 404
+    assert "frames" not in response.json()

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 import threading
 from typing import Any
@@ -23,6 +24,11 @@ DECODER_VERSION = 1
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_SOURCE_SAMPLES = 1_000_000
 MAX_SAMPLE_INTERVAL_US = 0.25
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_SUMMARY_BYTES = 8 * 1024 * 1024
+MAX_FRAMES_JSONL_BYTES = 64 * 1024 * 1024
+MAX_FRAME_LINE_BYTES = 64 * 1024
+MAX_SCANNED_FRAME_LINES = 1_000_000
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 LIMITATIONS = [
     "Generic Classical CAN frame decoding only.",
@@ -60,31 +66,77 @@ def _artifact_by_filename(
     return matches[0] if len(matches) == 1 else None
 
 
-def validated_artifact_path(
+def read_authoritative_artifact(
     data_dir: Path,
     record: dict[str, Any],
     filename: str,
-) -> Path:
+    *,
+    max_bytes: int,
+) -> bytes:
+    if max_bytes < 1:
+        raise ValueError("artifact byte ceiling must be positive")
     artifact = _artifact_by_filename(record, filename)
     if artifact is None:
         raise ValueError(f"authoritative SQLite artifact {filename} is missing")
     expected_relative = f"{record['run_id']}/{filename}"
     if artifact.get("relative_path") != expected_relative:
         raise ValueError(f"authoritative artifact path mismatch for {filename}")
-    run_dir = data_dir / str(record["run_id"])
+    run_id = str(record["run_id"])
+    if (
+        not RUN_ID_PATTERN.fullmatch(run_id)
+        or run_id in {".", ".."}
+        or ".partial" in run_id.lower()
+    ):
+        raise ValueError("authoritative artifact run ID is invalid")
+    run_dir = data_dir / run_id
     path = run_dir / filename
     if run_dir.is_symlink() or path.is_symlink():
         raise ValueError("artifact symlinks are not allowed")
     try:
+        _confined(run_dir, data_dir)
         confined = _confined(path, run_dir)
-        stat = confined.stat()
     except (FileNotFoundError, OSError) as exc:
         raise ValueError(f"authoritative artifact {filename} is missing") from exc
-    if stat.st_size != artifact.get("size_bytes"):
-        raise ValueError(f"authoritative artifact size mismatch for {filename}")
-    if _sha256(confined) != artifact.get("sha256"):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(confined, flags)
+    except OSError as exc:
+        raise ValueError(f"authoritative artifact {filename} cannot be opened") from exc
+    try:
+        before = os.fstat(descriptor)
+        identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"authoritative artifact {filename} is not a regular file")
+        if before.st_size > max_bytes:
+            raise ValueError(f"authoritative artifact {filename} exceeds its byte limit")
+        if before.st_size != artifact.get("size_bytes"):
+            raise ValueError(f"authoritative artifact size mismatch for {filename}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            data = handle.read(max_bytes + 1)
+        after = os.fstat(descriptor)
+        if identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError(f"authoritative artifact {filename} changed while reading")
+        current = os.stat(confined, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError(f"authoritative artifact {filename} was replaced while reading")
+    finally:
+        os.close(descriptor)
+    if len(data) != before.st_size:
+        raise ValueError(f"authoritative artifact {filename} changed while reading")
+    if hashlib.sha256(data).hexdigest() != artifact.get("sha256"):
         raise ValueError(f"authoritative artifact hash mismatch for {filename}")
-    return confined
+    return data
+
+
+def validated_artifact_path(
+    data_dir: Path,
+    record: dict[str, Any],
+    filename: str,
+) -> Path:
+    read_authoritative_artifact(
+        data_dir, record, filename, max_bytes=MAX_SOURCE_BYTES
+    )
+    return _confined(data_dir / str(record["run_id"]) / filename, data_dir)
 
 
 def _slugify(value: str) -> str:
@@ -156,20 +208,12 @@ class CanDecodeManager:
             raise ValueError("CAN decode label must contain 1 to 80 characters")
 
         source_dir = self.data_dir / request.source_run_id
-        manifest_path = source_dir / "manifest.json"
         if source_dir.is_symlink():
             raise ValueError("source directory symlink escapes are not allowed")
         try:
             _confined(source_dir, self.data_dir)
-            _confined(manifest_path, self.data_dir)
         except FileNotFoundError as exc:
             raise CanDecodeSourceNotFound("source capture not found") from exc
-        try:
-            source_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise ValueError("source manifest is missing or malformed") from exc
-        if source_manifest.get("run_id") != request.source_run_id:
-            raise ValueError("source manifest run ID does not match its directory")
         if self.database is None:
             raise ValueError("authoritative SQLite source evidence is required")
         source_record = self.database.get_capture_by_run_id(request.source_run_id)
@@ -177,11 +221,16 @@ class CanDecodeManager:
             raise ValueError("authoritative SQLite source row is missing")
         if source_record.get("status") != "complete":
             raise ValueError("authoritative SQLite source is not complete")
-        authoritative_manifest_path = validated_artifact_path(
-            self.data_dir, source_record, "manifest.json"
-        )
-        if authoritative_manifest_path != manifest_path.resolve():
-            raise ValueError("source manifest path does not match authoritative SQLite")
+        try:
+            manifest_bytes = read_authoritative_artifact(
+                self.data_dir, source_record, "manifest.json",
+                max_bytes=MAX_MANIFEST_BYTES,
+            )
+            source_manifest = json.loads(manifest_bytes)
+        except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("source manifest is missing or malformed") from exc
+        if source_manifest.get("run_id") != request.source_run_id:
+            raise ValueError("source manifest run ID does not match its directory")
 
         capture_type = source_manifest.get("capture_type")
         profile = source_manifest.get("profile")
@@ -200,32 +249,14 @@ class CanDecodeManager:
         else:
             raise ValueError("source capture is not an eligible network or CAN bus survey capture")
 
-        confined_source = validated_artifact_path(
-            self.data_dir, source_record, source_artifact
+        source_bytes = read_authoritative_artifact(
+            self.data_dir, source_record, source_artifact, max_bytes=MAX_SOURCE_BYTES
         )
+        if not source_bytes:
+            raise ValueError("source waveform exceeds the bounded file-size limit")
         source_artifact_record = _artifact_by_filename(source_record, source_artifact)
         assert source_artifact_record is not None
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(confined_source, flags)
-        try:
-            before = os.fstat(descriptor)
-            if before.st_size <= 0 or before.st_size > MAX_SOURCE_BYTES:
-                raise ValueError("source waveform exceeds the bounded file-size limit")
-            with os.fdopen(descriptor, "rb", closefd=False) as handle:
-                source_bytes = handle.read(MAX_SOURCE_BYTES + 1)
-            after = os.fstat(descriptor)
-        finally:
-            os.close(descriptor)
-        if (
-            (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        ):
-            raise RuntimeError("source waveform changed during decode")
         source_sha256 = hashlib.sha256(source_bytes).hexdigest()
-        if before.st_size != source_artifact_record.get("size_bytes"):
-            raise ValueError("source waveform size does not match authoritative SQLite")
-        if source_sha256 != source_artifact_record.get("sha256"):
-            raise ValueError("source waveform hash does not match authoritative SQLite")
         recorded_hashes = source_manifest.get("sha256")
         recorded_source_hash = (
             recorded_hashes.get(source_artifact)
@@ -239,9 +270,9 @@ class CanDecodeManager:
         frames = sorted(
             decoded["frames"],
             key=lambda frame: (
+                float(frame["timestamp_us"]),
                 int(frame["identifier"]),
                 bool(frame["extended"]),
-                float(frame["timestamp_us"]),
             ),
         )
         if not frames:
@@ -249,6 +280,10 @@ class CanDecodeManager:
         identifiers = aggregate_can_identifiers(frames)
 
         captured_at = datetime.now(UTC)
+        sample_interval_us = float(np.median(np.diff(time_us)))
+        duration_ms = float((time_us[-1] - time_us[0]) / 1000.0)
+        backend = f"can-decoder-v{DECODER_VERSION}"
+        preset = f"{decoded['nominal_bitrate_bps']}bps"
         run_id = (
             captured_at.strftime("%Y%m%dT%H%M%S%fZ")
             + f"-{_slugify(label)}-can-decode"
@@ -269,6 +304,12 @@ class CanDecodeManager:
             "captured_at": captured_at.isoformat(),
             "label": label,
             "capture_type": "can_decode",
+            "backend": backend,
+            "profile": "can-decode",
+            "preset": preset,
+            "samples": len(frames),
+            "sample_interval_us": sample_interval_us,
+            "duration_ms": duration_ms,
             "source_run_id": request.source_run_id,
             "parent_run_id": request.source_run_id,
             "source_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
@@ -296,11 +337,11 @@ class CanDecodeManager:
                     captured_at=captured_at.isoformat(),
                     capture_type="can_decode",
                     label=label,
-                    backend=f"can-decoder-v{DECODER_VERSION}",
-                    preset=f"{decoded['nominal_bitrate_bps']}bps",
+                    backend=backend,
+                    preset=preset,
                     samples=len(frames),
-                    sample_interval_us=float(np.median(np.diff(time_us))),
-                    duration_ms=float((time_us[-1] - time_us[0]) / 1000.0),
+                    sample_interval_us=sample_interval_us,
+                    duration_ms=duration_ms,
                     metadata=dict(common),
                 )
                 common["capture_id"] = capture_id
