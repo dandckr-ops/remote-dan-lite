@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=can-battery-gauge-1">
+  <link rel="stylesheet" href="/static/app.css?v=can-intelligence-1">
 </head>
 <body>
   <div class="shell">
@@ -206,7 +206,7 @@
           <div class="panel-heading"><div><span class="section-number">04</span><h2>Commissioned network capture</h2></div><p>VBAT · CAN-H · CAN-L · listen-only</p></div>
           <form id="can-capture-form" class="can-capture-form">
             <label class="field"><span>Evidence label</span><input id="can-label" maxlength="80" value="bench CAN proof" autocomplete="off"></label>
-            <label class="field"><span>Window</span><select id="can-window"><option value="short">40 ms</option><option value="medium">200 ms</option><option value="long">500 ms</option></select></label>
+            <label class="field"><span>Window</span><select id="can-window"><option value="can-analysis" selected>Analyze · 25 ms · 10 MS/s</option><option value="short">Waveform · 40 ms</option><option value="medium">Waveform · 200 ms</option><option value="long">Waveform · 500 ms</option></select></label>
             <label class="field"><span>Source</span><select id="can-mode"><option value="auto">Auto</option><option value="simulator">Simulator</option><option value="hardware">Pico hardware</option></select></label>
             <button class="capture-button" id="can-capture-button" type="submit"><span class="button-mark"></span>Capture network</button>
           </form>
@@ -228,6 +228,26 @@
               <p class="readout-detail" id="vbat-detail" data-vbat-detail>No network capture loaded. Raw VBAT remains in every network evidence package.</p>
             </aside>
             <div class="scope-grid"><div class="empty-preview" id="can-empty-preview"><div class="reticle"></div><strong>No CAN pair waveform loaded</strong><span>Run a new commissioned network capture above.</span></div><img id="can-overview" class="overview hidden" alt="Latest CAN-H and CAN-L evidence waveform; battery voltage is shown only as a digital gauge"></div>
+          </div>
+        </section>
+        <section class="panel can-analysis-panel" aria-labelledby="can-analysis-heading">
+          <div class="panel-heading">
+            <div><span class="section-number">04B</span><h2 id="can-analysis-heading">Passive bus analysis</h2></div>
+            <span class="status-label planned" id="can-analysis-status">No analysis</span>
+          </div>
+          <div class="can-analysis-grid">
+            <article class="analysis-metric load"><span>Bus load</span><strong id="can-load">—</strong><small>% observed occupancy</small></article>
+            <article class="analysis-metric"><span>Observed bus type</span><strong id="can-bus-type">—</strong><small>Classic / FD evidence</small></article>
+            <article class="analysis-metric"><span>Nominal bitrate</span><strong id="can-nominal-rate">—</strong><small>Arbitration phase</small></article>
+            <article class="analysis-metric"><span>FD data bitrate</span><strong id="can-data-rate">—</strong><small>BRS phase when observed</small></article>
+            <article class="analysis-metric protocol"><span>Protocol fingerprint</span><strong id="can-protocol">—</strong><small>Confidence-ranked ID / PGN clues</small></article>
+            <article class="analysis-metric"><span>Identifier format</span><strong id="can-id-format">—</strong><small>11-bit / 29-bit / mixed</small></article>
+            <article class="analysis-metric"><span>Frame activity</span><strong id="can-frame-count">—</strong><small>Observed frames</small></article>
+            <article class="analysis-metric"><span>Analysis confidence</span><strong id="can-analysis-confidence">—</strong><small>Capture-dependent</small></article>
+          </div>
+          <div class="analysis-detail">
+            <strong>Interpretation boundary</strong>
+            <p id="can-analysis-detail">Run the Analyze window. Protocol names require decoded identifier fingerprints; electrical shape or bitrate alone is not enough to call J1939.</p>
           </div>
         </section>
       </section>
@@ -255,6 +275,6 @@
 
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
-  <script src="/static/app.js?v=can-battery-gauge-1" defer></script>
+  <script src="/static/app.js?v=can-intelligence-1" defer></script>
 </body>
 </html>

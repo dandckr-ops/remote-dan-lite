@@ -15,6 +15,7 @@ This document separates product architecture from implementation status. A compo
 At the current repository baseline:
 
 - Pi 5 + PicoScope 2406B network capture is **proven**.
+- Passive CAN analysis is **hardware-path proven** at a negotiated 0.104 µs sample interval over all three commissioned channels with no overflow.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
 - SQLite metadata and evidence lineage are **proven live**.
 - Seven session-centered tabs are **proven live** and share one evidence state; Serial and guided-test acquisition remain commissioning boundaries.
@@ -79,10 +80,10 @@ It should remain simpler than the capture node and should not depend on the capt
 
 The implemented primary tabs are:
 
-1. **Overview** — hardware readiness, supply voltage, synchronization, storage, capture state, and recent sessions
+1. **Overview** — hardware readiness, synchronization, storage, capture state, and recent sessions
 2. **Scope** — profile-driven physical-signal acquisition with four configurable channels
 3. **Serial** — raw serial configuration, capture, and decode evidence
-4. **CAN** — listen-only acquisition, bus measurements, and decode evidence
+4. **CAN** — listen-only acquisition, battery gauge, CAN-H/CAN-L evidence, passive signal intelligence, and confidence-ranked protocol fingerprints
 5. **Tests** — guided workflows that configure the shared acquisition engines
 6. **Timeline** — correlated scope, CAN, serial, test, and operator events
 7. **Evidence** — session packages, lineage, raw artifacts, calculations, reports, and operator findings
@@ -96,12 +97,28 @@ A tab is a view or configuration surface over the same session. It must not dupl
 Scope and CAN deliberately use the same capture/evidence engine but expose different operator contracts:
 
 - **Scope** owns physical-signal profiles, A–D channel enable state and labels, AC/DC coupling, input range, probe ratio, collection window, waveform review, and bounded next-capture auto-range suggestions.
-- **CAN** owns the commissioned fixed harness: Channel A VBAT through 20:1, Channel B CAN-H, Channel C CAN-L, bus-derived measurements, and listen-only network evidence.
+- **CAN** owns the commissioned fixed harness: Channel A VBAT through 20:1, Channel B CAN-H, Channel C CAN-L, passive signal intelligence, bus-derived measurements, and listen-only network evidence.
 - Scope and CAN retain independent “latest capture” views so one lane does not overwrite the other operator context.
 
 Current Scope starting profiles are General/custom, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary. Secondary ignition is pickup-only: the scope, BNC, and ground lead must never connect directly to secondary voltage.
 
 The live 2406B was probed rather than trusting the SDK enum. This unit accepts ±20 mV, ±50 mV, ±100 mV, ±200 mV, ±500 mV, ±1 V, ±2 V, ±5 V, ±10 V, and ±20 V. It rejects the SDK's ±10 mV and ±50 V enum values. With a selected 20:1 attenuator, the maximum displayed full scale is therefore ±400 V; the physical accessory rating still governs.
+
+### Passive CAN analysis boundary
+
+The dedicated CAN analysis window requests 250,000 samples at 0.1 µs. The connected 2406B negotiated 0.104 µs, approximately 9.615 MS/s, while acquiring VBAT, CAN-H, and CAN-L without overflow. This supports strong nominal-rate evidence through 1 Mbit/s and useful 2 Mbit/s CAN FD data-phase evidence. Faster CAN FD phases are reported as unresolved when fewer than four samples per bit are available.
+
+The persisted analysis separates measurement from inference:
+
+- bus load is observed frame occupancy from SOF through the following 11 recessive nominal bit times over the recorded window;
+- nominal and data bitrates are selected from standard rates only when edge timing and CAN arbitration headers agree;
+- Classical CAN versus CAN FD comes from decoded FDF/BRS header evidence, not voltage shape;
+- J1939 and NMEA 2000 require CRC-valid 29-bit Classical CAN frames plus known PGN patterns and plausible standard rates;
+- OBD-II/ISO-TP and CANopen require CRC-valid frames plus their request/response or heartbeat/SDO identifier patterns;
+- unmatched traffic remains higher-layer unresolved or proprietary CAN;
+- Pico overflow, too few samples per bit, no activity, and ambiguous timing fail closed or lower confidence.
+
+The analysis is passive and listen-only. It does not transmit, acknowledge, replay, fuzz, or actively probe the bus. A short observation window describes only traffic seen during that window; absence of CAN FD or a protocol fingerprint does not prove the vehicle or network cannot use it elsewhere.
 
 ### Guided tests
 

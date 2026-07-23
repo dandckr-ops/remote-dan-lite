@@ -181,3 +181,33 @@ def test_scope_channel_validation_fails_closed_on_bad_or_unsafe_configs(tmp_path
     )
     assert network_override.status_code == 422
     assert "network profile" in network_override.json()["detail"]
+
+
+def test_can_analysis_window_is_network_only_and_returns_analysis(tmp_path: Path) -> None:
+    client = TestClient(create_app(data_dir=tmp_path))
+
+    valid = client.post(
+        "/api/captures",
+        json={
+            "label": "CAN signal intelligence",
+            "preset": "can-analysis",
+            "mode": "simulator",
+            "capture_type": "can",
+            "profile": "network",
+        },
+    )
+    assert valid.status_code == 201, valid.text
+    assert valid.json()["summary"]["can_analysis"]["status"] == "analyzed"
+
+    invalid = client.post(
+        "/api/captures",
+        json={
+            "label": "wrong lane",
+            "preset": "can-analysis",
+            "mode": "simulator",
+            "capture_type": "scope",
+            "profile": "general",
+        },
+    )
+    assert invalid.status_code == 422
+    assert "commissioned network harness" in invalid.json()["detail"]

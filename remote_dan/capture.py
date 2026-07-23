@@ -16,6 +16,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from remote_dan.can_analysis import analyze_can_waveform, can_crc15_bits
+
 if TYPE_CHECKING:
     from remote_dan.database import EvidenceDatabase
 
@@ -27,7 +29,7 @@ Coupling = Literal["AC", "DC"]
 class CapturePreset:
     name: str
     samples: int
-    sample_interval_us: int
+    sample_interval_us: float
 
     @property
     def duration_ms(self) -> float:
@@ -72,6 +74,11 @@ PRESETS = {
     "5s": CapturePreset("5s", samples=250_000, sample_interval_us=20),
     "10s": CapturePreset("10s", samples=250_000, sample_interval_us=40),
 }
+CAN_ANALYSIS_PRESET = CapturePreset(
+    "can-analysis",
+    samples=250_000,
+    sample_interval_us=0.1,
+)
 
 
 def _scope_channels(
@@ -175,6 +182,8 @@ def scope_config_payload(channels: tuple[ScopeChannelConfig, ...]) -> list[dict[
 
 
 def resolve_preset(name: str) -> CapturePreset:
+    if name == CAN_ANALYSIS_PRESET.name:
+        return CAN_ANALYSIS_PRESET
     try:
         return PRESETS[name]
     except KeyError as exc:
@@ -235,6 +244,61 @@ class CaptureData:
         return tuple(self.channels)
 
 
+def _sim_bits(value: int, width: int) -> list[int]:
+    return [int(bit) for bit in f"{value:0{width}b}"]
+
+
+def _sim_stuff(bits: list[int]) -> list[int]:
+    wire: list[int] = []
+    previous: int | None = None
+    run = 0
+    for bit in bits:
+        if previous is not None and run == 5:
+            stuff = 1 - previous
+            wire.append(stuff)
+            previous = stuff
+            run = 1
+        wire.append(bit)
+        if bit == previous:
+            run += 1
+        else:
+            previous = bit
+            run = 1
+    return wire
+
+
+def _sim_j1939_frame(identifier: int, payload: bytes) -> list[int]:
+    identifier_a = identifier >> 18
+    identifier_b = identifier & ((1 << 18) - 1)
+    frame_without_crc = (
+        [0]
+        + _sim_bits(identifier_a, 11)
+        + [1, 1]
+        + _sim_bits(identifier_b, 18)
+        + [0, 0, 0]
+        + _sim_bits(len(payload), 4)
+        + [bit for value in payload for bit in _sim_bits(value, 8)]
+    )
+    return _sim_stuff(frame_without_crc + can_crc15_bits(frame_without_crc)) + [1, 0, 1] + [1] * 7 + [1] * 3
+
+
+def _sim_network_bus(samples: int, sample_interval_us: float) -> np.ndarray:
+    samples_per_bit = max(1, round(2.0 / sample_interval_us))
+    target_bits = (samples + samples_per_bit - 1) // samples_per_bit
+    frames = (
+        _sim_j1939_frame(0x18F00401, bytes.fromhex("1122334455667788")),
+        _sim_j1939_frame(0x18FEF100, bytes.fromhex("8877665544332211")),
+    )
+    wire: list[int] = [1] * 20
+    frame_index = 0
+    while len(wire) < target_bits:
+        wire.extend(frames[frame_index % len(frames)])
+        wire.extend([1] * 20)
+        frame_index += 1
+    logical = np.repeat(np.asarray(wire, dtype=np.int8), samples_per_bit)[:samples]
+    return (logical == 0).astype(np.float64)
+
+
 class SimulatorBackend:
     """Deterministic source that resembles battery voltage plus a CAN pair."""
 
@@ -253,10 +317,7 @@ class SimulatorBackend:
             vbat = 13.65 + 0.035 * np.sin(2 * np.pi * 120 * time_s)
             vbat += rng.normal(0.0, 0.006, preset.samples)
 
-            samples_per_bit = max(8, int(20 / preset.sample_interval_us))
-            bit_count = (preset.samples + samples_per_bit - 1) // samples_per_bit
-            dominant = rng.integers(0, 2, bit_count, dtype=np.int8)
-            bus = np.repeat(dominant, samples_per_bit)[: preset.samples].astype(np.float64)
+            bus = _sim_network_bus(preset.samples, preset.sample_interval_us)
             edge_rounding = np.convolve(bus, np.ones(3) / 3.0, mode="same")
             noise = rng.normal(0.0, 0.008, preset.samples)
             channels = {
@@ -498,10 +559,17 @@ class CaptureManager:
             can_l = data.channels["CAN-L"]
             differential = can_h - can_l
             common_mode = (can_h + can_l) / 2.0
+            can_analysis = analyze_can_waveform(data.time_us, can_h, can_l)
+            if data.overflow_channels:
+                can_analysis["confidence"] = "low"
+                can_analysis.setdefault("warnings", []).append(
+                    "Pico input overflow was observed; timing and level conclusions are degraded."
+                )
             summary.update({
                 "differential_b_minus_c": _stats(differential),
                 "common_mode": _stats(common_mode),
                 "can_h_can_l_correlation": float(np.corrcoef(can_h, can_l)[0, 1]),
+                "can_analysis": can_analysis,
             })
             stack = np.column_stack((data.time_us, vbat, can_h, can_l, differential, common_mode))
             header = "time_us,vbat_v,can_h_v,can_l_v,diff_b_minus_c_v,common_mode_v"

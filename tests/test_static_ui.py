@@ -89,6 +89,16 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
         "vbat-value",
         "vbat-detail",
         "can-overview",
+        "can-analysis-status",
+        "can-load",
+        "can-bus-type",
+        "can-nominal-rate",
+        "can-data-rate",
+        "can-protocol",
+        "can-id-format",
+        "can-frame-count",
+        "can-analysis-confidence",
+        "can-analysis-detail",
         "timeline-list",
         "run-list",
     }
@@ -105,6 +115,10 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
     assert "Battery voltage" in can_markup
     assert 'class="can-battery-gauge"' in can_markup
     assert can_markup.index("data-vbat-value") < can_markup.index('id="can-overview"')
+    assert can_markup.index('id="can-overview"') < can_markup.index('id="can-analysis-status"')
+    assert 'value="can-analysis"' in can_markup
+    assert "Bus load" in can_markup
+    assert "Protocol fingerprint" in can_markup
     assert index.count("data-vbat-value") == 1
     assert index.count("data-vbat-detail") == 1
     assert index.count("data-scope-profile=") == 5
@@ -144,6 +158,8 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert "function suggestScopeRange" in script
     assert "function bindScopeCaptureForm" in script
     assert "function bindCanCaptureForm" in script
+    assert "function showCanAnalysis" in script
+    assert "function formatBitrate" in script
     assert 'profile: "network"' in script
     assert "preview_channels" in script
     assert "Legacy network preview withheld" in script

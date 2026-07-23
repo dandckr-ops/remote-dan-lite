@@ -14,6 +14,20 @@ from remote_dan.capture import (
 )
 
 
+def streaming_interval(sample_interval_us: float) -> tuple[int, str, float]:
+    if sample_interval_us <= 0:
+        raise ValueError("sample interval must be positive")
+    if sample_interval_us < 1.0:
+        nanoseconds = round(sample_interval_us * 1000.0)
+        if nanoseconds < 1:
+            raise ValueError("sample interval is below the PS2000A nanosecond limit")
+        return nanoseconds, "PS2000A_NS", 0.001
+    microseconds = round(sample_interval_us)
+    if abs(microseconds - sample_interval_us) > 1e-9:
+        raise ValueError("sample intervals above 1 us must use whole microseconds")
+    return microseconds, "PS2000A_US", 1.0
+
+
 class PicoPS2000ABackend:
     """Profile-driven PS2000A streaming acquisition for the 2406B field harness."""
 
@@ -103,12 +117,15 @@ class PicoPS2000ABackend:
                     )
                 )
 
-            sample_interval = ctypes.c_int32(preset.sample_interval_us)
+            interval_value, interval_unit, interval_to_us = streaming_interval(
+                preset.sample_interval_us
+            )
+            sample_interval = ctypes.c_int32(interval_value)
             assert_pico_ok(
                 ps.ps2000aRunStreaming(
                     handle,
                     ctypes.byref(sample_interval),
-                    ps.PS2000A_TIME_UNITS["PS2000A_US"],
+                    ps.PS2000A_TIME_UNITS[interval_unit],
                     0,
                     total_samples,
                     1,
@@ -179,11 +196,12 @@ class PicoPS2000ABackend:
                 for config in enabled_configs
                 if overflow_mask & (1 << channel_ids[config.channel])
             )
-            time_us = np.arange(total_samples, dtype=np.float64) * int(sample_interval.value)
+            actual_interval_us = float(sample_interval.value) * interval_to_us
+            time_us = np.arange(total_samples, dtype=np.float64) * actual_interval_us
             actual_preset = type(preset)(
                 name=preset.name,
                 samples=preset.samples,
-                sample_interval_us=int(sample_interval.value),
+                sample_interval_us=actual_interval_us,
             )
             return CaptureData(
                 backend=self.name,

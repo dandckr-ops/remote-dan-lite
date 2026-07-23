@@ -23,6 +23,7 @@ This repository deliberately separates proven behavior from source-complete and 
 | Area | Status | Honest boundary |
 |---|---|---|
 | Pi 5 + PicoScope 2406B network capture | **Proven** | Hardware acquisition has produced bounded VBAT/CAN captures and downloadable evidence packages. |
+| Passive CAN signal intelligence | **Hardware-path proven** | The 2406B sustained a 250,000-sample, three-channel analysis capture at a negotiated 0.104 µs interval with no overflow. Load, bitrate, frame format, identifier width, and CRC-gated protocol fingerprints are persisted with explicit confidence. |
 | Configurable Scope workspace | **Hardware-preflight proven** | The real 2406B accepted profile-driven A–D enable state, AC/DC coupling, ±20 mV through ±20 V input ranges, 1:1/10:1/20:1 scaling, and a 10-second 250,000-sample capture. Secondary ignition requires a capacitive pickup and never a direct secondary connection. |
 | Artifact generation | **Proven** | Each run produces CSV, JSON, PNG, PDF, and a checksum manifest. |
 | SQLite evidence index | **Proven live** | The appliance preserves capture/artifact lineage locally while waveform and report files remain ordinary filesystem artifacts. |
@@ -35,7 +36,7 @@ This repository deliberately separates proven behavior from source-complete and 
 A bounded Pico capture creates a timestamped evidence directory containing:
 
 - `capture.csv` — raw time and enabled engineering-unit channels; network captures also retain VBAT, CAN-H, CAN-L, differential, and common mode
-- `summary.json` — channel statistics, profile/channel configuration, overflow state, and network-derived measurements where applicable
+- `summary.json` — channel statistics, profile/channel configuration, overflow state, and network-derived measurements; analysis-grade CAN captures add load, nominal/data rate, frame format, CRC-valid header count, protocol fingerprint, and confidence
 - `overview.png` — quick visual review
 - `report.pdf` — Field Journal report artifact
 - `manifest.json` — run identity, backend, channels, artifact list, and SHA-256 checksums
@@ -75,7 +76,7 @@ Connections and System remain secondary setup surfaces. Tabs configure or inspec
 
 **Scope** is the configurable physical-signal workspace. It provides General, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary starting profiles; 40 ms through 10 s windows; four channel enable/label controls; AC/DC coupling; model-proven input ranges; probe scaling; and bounded next-capture auto-range suggestions.
 
-**CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
+**CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. Its analysis window samples the passive pair at approximately 10 MS/s and reports observed occupancy, nominal bitrate, CAN versus CAN FD header evidence, BRS data rate when resolvable, identifier width, frame activity, physical-layer measurements, and confidence-ranked protocol fingerprints. J1939, NMEA 2000, OBD-II/ISO-TP, and CANopen names require CRC-valid Classical CAN frames plus their identifier/PGN patterns; bitrate or voltage shape alone is never treated as proof. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
 
 Guided tests such as relative compression and cylinder contribution belong under **Tests**. They configure reusable capture engines and preserve the raw evidence, calculations, confidence, and operator interpretation.
 

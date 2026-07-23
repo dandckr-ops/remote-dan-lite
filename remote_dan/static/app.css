@@ -188,6 +188,8 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 
 .status-label { border: 1px solid var(--rule); padding: 7px 9px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; }
 .status-label.planned { border-color: rgba(255, 188, 66, .45); color: var(--amber); }
+.status-label.live { border-color: rgba(92, 255, 154, .45); color: var(--live); }
+.status-label.error { border-color: rgba(255, 105, 97, .5); color: #ff8c84; }
 .commissioned-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 30px; padding: 30px; }
 .commissioned-body p { color: var(--muted); font-size: 12px; line-height: 1.8; }
 .commissioned-body .lead { color: var(--cream); font-family: var(--condensed); font-size: 24px; line-height: 1.25; }
@@ -205,6 +207,19 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .metric:nth-child(2) strong { color: var(--blue); }
 .metric small { margin-left: 7px; color: var(--muted); font-size: 9px; }
 .can-preview { margin-top: 0; }
+.can-analysis-panel { margin-top: 18px; }
+.can-analysis-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.analysis-metric { min-width: 0; min-height: 136px; padding: 20px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.analysis-metric:nth-child(4n) { border-right: 0; }
+.analysis-metric:nth-last-child(-n + 4) { border-bottom: 0; }
+.analysis-metric > span { display: block; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
+.analysis-metric strong { display: block; margin-top: 18px; color: var(--cream); font-family: var(--condensed); font-size: clamp(22px, 2vw, 34px); line-height: 1; text-transform: uppercase; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.analysis-metric.load strong { color: var(--live); font-size: clamp(38px, 4vw, 58px); }
+.analysis-metric.protocol strong { color: var(--amber); }
+.analysis-metric small { display: block; margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.analysis-detail { display: grid; grid-template-columns: minmax(150px, .25fr) minmax(0, 1fr); gap: 24px; padding: 20px; border-top: 1px solid var(--rule); background: rgba(255, 255, 255, .012); }
+.analysis-detail strong { color: var(--amber); font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
+.analysis-detail p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
 
 .test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .test-grid article { min-height: 160px; padding: 24px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
@@ -245,6 +260,11 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .workflow-card { grid-column: 1 / -1; }
   .can-battery-gauge { grid-template-columns: minmax(200px, .42fr) minmax(280px, .58fr); }
   .can-battery-gauge .readout-detail { grid-column: 1 / -1; border-top: 1px solid var(--rule); text-align: center; }
+  .can-analysis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analysis-metric:nth-child(4n) { border-right: 1px solid var(--rule); }
+  .analysis-metric:nth-child(2n) { border-right: 0; }
+  .analysis-metric:nth-last-child(-n + 4) { border-bottom: 1px solid var(--rule); }
+  .analysis-metric:nth-last-child(-n + 2) { border-bottom: 0; }
 }
 
 @media (max-width: 900px) {
@@ -295,6 +315,10 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .commissioned-body { padding: 20px; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .metric-grid .metric:last-child { grid-column: 1 / -1; }
+  .can-analysis-grid { grid-template-columns: 1fr; }
+  .analysis-metric, .analysis-metric:nth-child(2n), .analysis-metric:nth-child(4n), .analysis-metric:nth-last-child(-n + 4), .analysis-metric:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .analysis-metric:last-child { border-bottom: 0; }
+  .analysis-detail { grid-template-columns: 1fr; gap: 10px; }
   .test-grid { grid-template-columns: 1fr; }
   .test-grid article, .test-grid article:nth-child(2n), .test-grid article:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
   .test-grid article:last-child { border-bottom: 0; }

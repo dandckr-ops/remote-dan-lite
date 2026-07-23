@@ -67,6 +67,17 @@ function formatMetric(value, digits = 2) {
   return Number.isFinite(numeric) ? numeric.toFixed(digits) : "—";
 }
 
+function formatBitrate(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "—";
+  if (numeric >= 1_000_000) {
+    const megabits = numeric / 1_000_000;
+    return `${Number.isInteger(megabits) ? megabits.toFixed(0) : megabits.toFixed(2)} Mbit/s`;
+  }
+  const kilobits = numeric / 1000;
+  return `${Number.isInteger(kilobits) ? kilobits.toFixed(0) : kilobits.toFixed(1)} kbit/s`;
+}
+
 function formatTimestamp(value) {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString();
@@ -274,6 +285,67 @@ function showLatestMetadata(run) {
   $("#latest-time").textContent = formatTimestamp(run.captured_at);
 }
 
+function showCanAnalysis(run) {
+  const analysis = run?.summary?.can_analysis;
+  const status = $("#can-analysis-status");
+  const reset = () => {
+    $("#can-load").textContent = "—";
+    $("#can-bus-type").textContent = "—";
+    $("#can-nominal-rate").textContent = "—";
+    $("#can-data-rate").textContent = "—";
+    $("#can-protocol").textContent = "—";
+    $("#can-id-format").textContent = "—";
+    $("#can-frame-count").textContent = "—";
+    $("#can-analysis-confidence").textContent = "—";
+  };
+  reset();
+  if (!analysis) {
+    status.textContent = "Not analyzed";
+    status.className = "status-label planned";
+    $("#can-analysis-detail").textContent = "This evidence predates passive CAN analysis. Run the Analyze window; old evidence remains unchanged.";
+    return;
+  }
+  if (analysis.status !== "analyzed") {
+    status.textContent = analysis.status === "no_bus_activity" ? "No bus activity" : "Insufficient evidence";
+    status.className = "status-label error";
+    $("#can-bus-type").textContent = analysis.physical_layer || "Unresolved";
+    $("#can-analysis-confidence").textContent = "None";
+    $("#can-analysis-detail").textContent = (analysis.warnings || []).join(" ") || "The capture did not contain enough defensible timing evidence.";
+    return;
+  }
+
+  status.textContent = "Analyzed";
+  status.className = "status-label live";
+  $("#can-load").textContent = formatMetric(analysis.bus_load_percent, 1);
+  $("#can-bus-type").textContent = analysis.bus_type || "CAN-family";
+  $("#can-nominal-rate").textContent = formatBitrate(analysis.nominal_bitrate_bps);
+  $("#can-data-rate").textContent = analysis.fd_brs_observed
+    ? formatBitrate(analysis.data_bitrate_bps)
+    : (analysis.bus_type === "CAN FD" ? "No BRS" : "N/A");
+  $("#can-protocol").textContent = analysis.protocol?.name || "Higher layer unresolved";
+  $("#can-id-format").textContent = analysis.identifier_format || "—";
+  $("#can-frame-count").textContent = Number.isFinite(Number(analysis.frame_count))
+    ? Number(analysis.frame_count).toLocaleString()
+    : "—";
+  $("#can-analysis-confidence").textContent = (analysis.confidence || "unknown").toUpperCase();
+
+  const protocolEvidence = analysis.protocol?.evidence || [];
+  const warnings = analysis.warnings || [];
+  const quality = analysis.signal_quality || {};
+  const details = [
+    `${formatMetric(analysis.observation_window_ms, 2)} ms observation`,
+    `${formatMetric(analysis.samples_per_nominal_bit, 1)} samples/nominal bit`,
+    `${analysis.crc_valid_header_count ?? 0} CRC-valid / ${analysis.decoded_header_count ?? 0} decoded headers`,
+    analysis.bus_load_method,
+    ...protocolEvidence,
+    Number.isFinite(Number(quality.differential_span_v))
+      ? `${formatMetric(quality.differential_span_v, 2)} V dominant differential span`
+      : null,
+    ...warnings,
+  ].filter(Boolean);
+  $("#can-analysis-detail").textContent = details.join(" · ");
+}
+
 function showNetwork(run) {
   if (!run) return;
   const previewChannels = run.summary?.preview_channels || [];
@@ -304,6 +376,7 @@ function showNetwork(run) {
   $("#can-diff-p2p").textContent = formatMetric(summary.differential_b_minus_c?.p2p);
   $("#can-common-mean").textContent = formatMetric(summary.common_mode?.mean);
   $("#can-correlation").textContent = formatMetric(summary.can_h_can_l_correlation, 3);
+  showCanAnalysis(run);
 }
 
 function showScope(run) {

@@ -33,7 +33,9 @@ STATIC_DIR = Path(__file__).with_name("static")
 
 class CapturePayload(BaseModel):
     label: str = Field(default="field capture", min_length=1, max_length=80)
-    preset: Literal["short", "medium", "long", "1s", "2s", "5s", "10s"] = "short"
+    preset: Literal[
+        "can-analysis", "short", "medium", "long", "1s", "2s", "5s", "10s"
+    ] = "short"
     mode: Literal["auto", "hardware", "simulator"] = "auto"
     capture_type: Literal["scope", "serial", "can", "test"] = "scope"
     profile: Literal[
@@ -199,6 +201,11 @@ def create_app(
 
     @app.post("/api/captures", status_code=201)
     def create_capture(payload: CapturePayload) -> dict[str, object]:
+        if payload.preset == "can-analysis" and payload.profile != "network":
+            raise HTTPException(
+                status_code=422,
+                detail="the CAN analysis window is limited to the commissioned network harness",
+            )
         channel_overrides = _scope_channel_overrides(payload)
         hardware = hardware_probe()
         hardware_ready = bool(

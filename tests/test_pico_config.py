@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 from remote_dan.capture import CaptureRequest, ScopeChannelConfig, resolve_capture_channels
-from remote_dan.pico import PicoPS2000ABackend
+from remote_dan.pico import PicoPS2000ABackend, streaming_interval
+
+
+def test_streaming_interval_uses_nanoseconds_for_can_analysis() -> None:
+    assert streaming_interval(0.1) == (100, "PS2000A_NS", 0.001)
+    assert streaming_interval(2.0) == (2, "PS2000A_US", 1.0)
 
 
 def test_capture_channel_resolution_keeps_network_fixed_and_scope_configurable() -> None:
