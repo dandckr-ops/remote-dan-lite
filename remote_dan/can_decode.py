@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import errno
 import hashlib
 import io
 import json
@@ -88,21 +89,32 @@ def read_authoritative_artifact(
         or ".partial" in run_id.lower()
     ):
         raise ValueError("authoritative artifact run ID is invalid")
-    run_dir = data_dir / run_id
-    path = run_dir / filename
-    if run_dir.is_symlink() or path.is_symlink():
-        raise ValueError("artifact symlinks are not allowed")
+    if (
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", filename)
+        or filename in {".", ".."}
+    ):
+        raise ValueError("authoritative artifact filename is invalid")
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    root_descriptor: int | None = None
+    run_descriptor: int | None = None
+    descriptor: int | None = None
     try:
-        _confined(run_dir, data_dir)
-        confined = _confined(path, run_dir)
-    except (FileNotFoundError, OSError) as exc:
-        raise ValueError(f"authoritative artifact {filename} is missing") from exc
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(confined, flags)
-    except OSError as exc:
-        raise ValueError(f"authoritative artifact {filename} cannot be opened") from exc
-    try:
+        root_descriptor = os.open(data_dir, directory_flags)
+        root_stat = os.fstat(root_descriptor)
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise ValueError("capture root is not a directory")
+        run_descriptor = os.open(run_id, directory_flags, dir_fd=root_descriptor)
+        run_stat = os.fstat(run_descriptor)
+        if not stat.S_ISDIR(run_stat.st_mode):
+            raise ValueError("artifact run path is not a directory")
+        run_identity = (run_stat.st_dev, run_stat.st_ino)
+        descriptor = os.open(filename, file_flags, dir_fd=run_descriptor)
         before = os.fstat(descriptor)
         identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         if not stat.S_ISREG(before.st_mode):
@@ -116,11 +128,28 @@ def read_authoritative_artifact(
         after = os.fstat(descriptor)
         if identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
             raise ValueError(f"authoritative artifact {filename} changed while reading")
-        current = os.stat(confined, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+        current_run = os.stat(run_id, dir_fd=root_descriptor, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(current_run.st_mode)
+            or (current_run.st_dev, current_run.st_ino) != run_identity
+        ):
+            raise ValueError("authoritative artifact run directory was replaced while reading")
+        current = os.stat(filename, dir_fd=run_descriptor, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino)
+        ):
             raise ValueError(f"authoritative artifact {filename} was replaced while reading")
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            raise ValueError(f"authoritative artifact {filename} is missing") from exc
+        if exc.errno == errno.ELOOP:
+            raise ValueError("artifact symlinks are not allowed") from exc
+        raise ValueError(f"authoritative artifact {filename} cannot be opened") from exc
     finally:
-        os.close(descriptor)
+        for opened_descriptor in (descriptor, run_descriptor, root_descriptor):
+            if opened_descriptor is not None:
+                os.close(opened_descriptor)
     if len(data) != before.st_size:
         raise ValueError(f"authoritative artifact {filename} changed while reading")
     if hashlib.sha256(data).hexdigest() != artifact.get("sha256"):
@@ -268,6 +297,13 @@ class CanDecodeManager:
         if recorded_source_hash != source_sha256:
             raise ValueError("source waveform hash does not match its immutable manifest")
         time_us, can_h, can_l = self._load_waveform_bytes(source_bytes)
+        source_samples = source_record.get("samples")
+        if (
+            not isinstance(source_samples, int)
+            or isinstance(source_samples, bool)
+            or source_samples != int(time_us.size)
+        ):
+            raise ValueError("source sample count does not match authoritative SQLite")
         decoded = decode_can_waveform(time_us, can_h, can_l)
         frames = sorted(
             decoded["frames"],
@@ -316,6 +352,7 @@ class CanDecodeManager:
             "parent_run_id": request.source_run_id,
             "source_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
             "parent_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
+            "source_samples": source_samples,
             "source_artifact": source_artifact,
             "source_sha256": source_sha256,
             "decoder": settings,

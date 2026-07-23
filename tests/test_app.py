@@ -643,6 +643,19 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
     run_id = "synthetic-child-can-decode"
     run_dir = capture_root / run_id
     run_dir.mkdir(parents=True)
+    app = create_app(
+        data_dir=capture_root,
+        db_path=tmp_path / "evidence.sqlite3",
+    )
+    source_capture_id = app.state.database.create_capture(
+        run_id="synthetic-source",
+        captured_at="2026-07-23T11:59:00+00:00",
+        capture_type="can",
+        label="synthetic source",
+        backend="test",
+        samples=3_000,
+    )
+    app.state.database.complete_capture_with_artifacts(source_capture_id, [])
     frames = [
         {
             "identifier": 0x100,
@@ -685,6 +698,8 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         "run_id": run_id,
         "capture_type": "can_decode",
         "source_run_id": "synthetic-source",
+        "source_capture_id": source_capture_id,
+        "source_samples": 3_000,
         "can_polarity": "expected",
         "nominal_bitrate_bps": 500_000,
         "writes_performed": 0,
@@ -700,10 +715,6 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         "frame_count": len(frames),
         "identifier_count": len(identifiers),
     }))
-    app = create_app(
-        data_dir=capture_root,
-        db_path=tmp_path / "evidence.sqlite3",
-    )
     capture_id = app.state.database.create_capture(
         run_id=run_id,
         captured_at="2026-07-23T12:00:00+00:00",
@@ -877,6 +888,10 @@ def test_can_decode_result_artifact_bounds_fail_closed(
         "frame_indices", "chronology", "missing_summary_key", "per_key_count",
         "total_frame_count", "identifier_count", "document_identity",
         "document_polarity", "document_bitrate", "document_writes",
+        "document_counts_missing", "frame_bitrate_mismatch", "frame_source_bound",
+        "frame_source_order", "summary_first_consistency", "summary_payload_consistency",
+        "summary_last_payload_consistency", "summary_byte_consistency",
+        "summary_interval_consistency",
     ),
 )
 def test_can_decode_result_strict_schema_and_consistency_fail_closed(
@@ -887,6 +902,16 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
     run_id = f"strict-{mutation.replace('_', '-')}"
     run_dir = capture_root / run_id
     run_dir.mkdir(parents=True)
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    source_capture_id = app.state.database.create_capture(
+        run_id="authoritative-source",
+        captured_at="2026-07-23T11:59:00+00:00",
+        capture_type="can",
+        label="authoritative source",
+        backend="test",
+        samples=1_000,
+    )
+    app.state.database.complete_capture_with_artifacts(source_capture_id, [])
     frames = [
         {
             "identifier": 0x321,
@@ -910,6 +935,8 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
         "run_id": run_id,
         "capture_type": "can_decode",
         "source_run_id": "authoritative-source",
+        "source_capture_id": source_capture_id,
+        "source_samples": 1_000,
         "can_polarity": "expected",
         "nominal_bitrate_bps": 500_000,
         "writes_performed": 0,
@@ -986,6 +1013,26 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
         summary["nominal_bitrate_bps"] = 123_456
     elif mutation == "document_writes":
         manifest["writes_performed"] = 1
+    elif mutation == "document_counts_missing":
+        manifest.pop("frame_count")
+        summary.pop("identifier_count")
+    elif mutation == "frame_bitrate_mismatch":
+        frame["nominal_bitrate_bps"] = 250_000
+    elif mutation == "frame_source_bound":
+        frame["source_sample_end"] = 1_001
+    elif mutation == "frame_source_order":
+        frames[1]["source_sample_start"] = 5
+        frames[1]["source_sample_end"] = 8
+    elif mutation == "summary_first_consistency":
+        item["first_timestamp_us"] = 0.0
+    elif mutation == "summary_payload_consistency":
+        item["payload_change_count"] = 0
+    elif mutation == "summary_last_payload_consistency":
+        item["last_payload_hex"] = "AA"
+    elif mutation == "summary_byte_consistency":
+        item["byte_change_counts"] = [0]
+    elif mutation == "summary_interval_consistency":
+        item["mean_period_us"] = 2.0
 
     files = {
         "frames.jsonl": "".join(json.dumps(value) + "\n" for value in frames),
@@ -995,7 +1042,6 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
     }
     for filename, content in files.items():
         (run_dir / filename).write_text(content, encoding="utf-8")
-    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
     capture_id = app.state.database.create_capture(
         run_id=run_id,
         captured_at="2026-07-23T12:00:00+00:00",

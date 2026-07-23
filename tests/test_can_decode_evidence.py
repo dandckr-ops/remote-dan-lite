@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ from remote_dan.can_decode import (
     CanDecodeRequest,
     CanDecodeSourceNotFound,
     eligible_bus_survey_classification,
+    read_authoritative_artifact,
 )
 from remote_dan.database import EvidenceDatabase
 
@@ -543,3 +545,42 @@ def test_failure_injection_removes_child_rows_and_partial_evidence(
     assert (source_dir / "capture.csv").read_bytes() == source_waveform
     assert not list(root.glob(".*.partial-*"))
     assert [path.name for path in root.iterdir()] == ["source-can-001"]
+
+
+def test_authoritative_read_rejects_intermediate_run_directory_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "captures"
+    run_id = "directory-swap-source"
+    run_dir = root / run_id
+    outside = tmp_path / "outside"
+    run_dir.mkdir(parents=True)
+    outside.mkdir()
+    expected = b'{"trusted":true}\n'
+    (run_dir / "manifest.json").write_bytes(expected)
+    (outside / "manifest.json").write_bytes(expected)
+    record = {
+        "run_id": run_id,
+        "artifacts": [{
+            "filename": "manifest.json",
+            "relative_path": f"{run_id}/manifest.json",
+            "size_bytes": len(expected),
+            "sha256": hashlib.sha256(expected).hexdigest(),
+        }],
+    }
+    original_open = os.open
+    swapped = False
+
+    def racing_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal swapped
+        if not swapped and str(path).endswith("manifest.json"):
+            swapped = True
+            saved = root / f"{run_id}.saved"
+            run_dir.rename(saved)
+            run_dir.symlink_to(outside, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", racing_open)
+    with pytest.raises(ValueError, match="replaced|symlink|cannot be opened"):
+        read_authoritative_artifact(root, record, "manifest.json", max_bytes=1024)

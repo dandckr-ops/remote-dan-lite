@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import socket
 import threading
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -177,6 +177,10 @@ def _valid_can_decode_document(document: object, run_id: str) -> bool:
     if not isinstance(document, dict):
         return False
     source_run_id = document.get("source_run_id")
+    source_capture_id = document.get("source_capture_id")
+    source_samples = document.get("source_samples")
+    frame_count = document.get("frame_count")
+    identifier_count = document.get("identifier_count")
     writes_performed = document.get("writes_performed")
     return (
         document.get("run_id") == run_id
@@ -184,12 +188,107 @@ def _valid_can_decode_document(document: object, run_id: str) -> bool:
         and isinstance(source_run_id, str)
         and RUN_ID_PATTERN.fullmatch(source_run_id) is not None
         and source_run_id not in {".", ".."}
+        and isinstance(source_capture_id, int)
+        and not isinstance(source_capture_id, bool)
+        and source_capture_id > 0
+        and isinstance(source_samples, int)
+        and not isinstance(source_samples, bool)
+        and source_samples > 0
+        and isinstance(frame_count, int)
+        and not isinstance(frame_count, bool)
+        and frame_count > 0
+        and isinstance(identifier_count, int)
+        and not isinstance(identifier_count, bool)
+        and identifier_count > 0
         and document.get("can_polarity") in {"expected", "reversed"}
         and document.get("nominal_bitrate_bps") in NOMINAL_BITRATES
         and isinstance(writes_performed, int)
         and not isinstance(writes_performed, bool)
         and writes_performed == 0
     )
+
+
+def _update_identifier_evidence(
+    accumulators: dict[tuple[int, bool], dict[str, Any]],
+    frame: dict[str, object],
+) -> None:
+    key = (int(frame["identifier"]), bool(frame["extended"]))
+    timestamp = float(frame["timestamp_us"])
+    payload = list(frame["payload_bytes"])
+    payload_state = (bool(frame["remote"]), int(frame["dlc"]), tuple(payload))
+    state = accumulators.get(key)
+    if state is None:
+        accumulators[key] = {
+            "count": 1,
+            "first": timestamp,
+            "last": timestamp,
+            "interval_sum": 0.0,
+            "min_interval": None,
+            "max_interval": None,
+            "payload_state": payload_state,
+            "payload": payload,
+            "payload_changes": 0,
+            "byte_changes": [0] * len(payload),
+            "last_payload_hex": str(frame["payload_hex"]),
+        }
+        return
+    interval = timestamp - float(state["last"])
+    state["count"] = int(state["count"]) + 1
+    state["interval_sum"] = float(state["interval_sum"]) + interval
+    state["min_interval"] = (
+        interval if state["min_interval"] is None
+        else min(float(state["min_interval"]), interval)
+    )
+    state["max_interval"] = (
+        interval if state["max_interval"] is None
+        else max(float(state["max_interval"]), interval)
+    )
+    if payload_state != state["payload_state"]:
+        state["payload_changes"] = int(state["payload_changes"]) + 1
+    previous_payload = list(state["payload"])
+    byte_changes = list(state["byte_changes"])
+    maximum_length = max(len(previous_payload), len(payload))
+    byte_changes.extend([0] * (maximum_length - len(byte_changes)))
+    for index in range(maximum_length):
+        previous_value = previous_payload[index] if index < len(previous_payload) else None
+        current_value = payload[index] if index < len(payload) else None
+        if previous_value != current_value:
+            byte_changes[index] += 1
+    state.update({
+        "last": timestamp,
+        "payload_state": payload_state,
+        "payload": payload,
+        "byte_changes": byte_changes,
+        "last_payload_hex": str(frame["payload_hex"]),
+    })
+
+
+def _summarize_identifier_evidence(
+    accumulators: dict[tuple[int, bool], dict[str, Any]],
+) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for (identifier, extended), state in sorted(accumulators.items()):
+        count = int(state["count"])
+        first = float(state["first"])
+        last = float(state["last"])
+        mean_period = float(state["interval_sum"]) / (count - 1) if count > 1 else None
+        summaries.append({
+            "identifier": identifier,
+            "identifier_hex": _exact_identifier_hex(identifier, extended),
+            "extended": extended,
+            "frame_count": count,
+            "first_timestamp_us": first,
+            "last_timestamp_us": last,
+            "observed_duration_us": last - first,
+            "mean_period_us": mean_period,
+            "mean_frequency_hz": 1_000_000.0 / mean_period if mean_period else None,
+            "min_interval_us": state["min_interval"],
+            "max_interval_us": state["max_interval"],
+            "payload_change_count": int(state["payload_changes"]),
+            "last_payload_hex": str(state["last_payload_hex"]),
+            "byte_change_counts": list(state["byte_changes"]),
+        })
+    return summaries
 
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -610,9 +709,13 @@ def create_app(
             ))
             identity_fields = (
                 "source_run_id",
+                "source_capture_id",
+                "source_samples",
                 "can_polarity",
                 "nominal_bitrate_bps",
                 "writes_performed",
+                "frame_count",
+                "identifier_count",
             )
             if (
                 not _valid_can_decode_document(manifest, run_id)
@@ -620,6 +723,14 @@ def create_app(
                 or any(manifest.get(name) != summary.get(name) for name in identity_fields)
             ):
                 raise OSError("not a CAN decode")
+            source_record = database.get_capture_by_run_id(str(manifest["source_run_id"]))
+            if (
+                source_record is None
+                or source_record.get("status") != "complete"
+                or source_record.get("id") != manifest["source_capture_id"]
+                or source_record.get("samples") != manifest["source_samples"]
+            ):
+                raise OSError("CAN decode parent lineage is not authoritative")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         all_identifiers = summary.get("identifiers", [])
@@ -654,6 +765,10 @@ def create_app(
         scanned_frames = 0
         frame_counts: dict[tuple[int, bool], int] = {}
         previous_order: tuple[float, int, bool] | None = None
+        previous_source_bounds: tuple[int, int] | None = None
+        identifier_evidence: dict[tuple[int, bool], dict[str, Any]] = {}
+        expected_bitrate = int(manifest["nominal_bitrate_bps"])
+        source_samples = int(manifest["source_samples"])
         try:
             lines = frames_bytes.splitlines()
             if len(lines) > MAX_SCANNED_FRAME_LINES:
@@ -669,10 +784,26 @@ def create_app(
                 if previous_order is not None and order < previous_order:
                     raise ValueError("CAN frame rows are not chronological")
                 previous_order = order
+                source_bounds = (
+                    int(frame["source_sample_start"]),
+                    int(frame["source_sample_end"]),
+                )
+                if (
+                    frame["nominal_bitrate_bps"] != expected_bitrate
+                    or source_bounds[1] > source_samples
+                    or previous_source_bounds is not None
+                    and (
+                        source_bounds[0] < previous_source_bounds[0]
+                        or source_bounds[1] < previous_source_bounds[1]
+                    )
+                ):
+                    raise ValueError("CAN frame source evidence is inconsistent")
+                previous_source_bounds = source_bounds
                 if key not in summary_by_key:
                     raise ValueError("CAN frame has no identifier summary")
                 scanned_frames += 1
                 frame_counts[key] = frame_counts.get(key, 0) + 1
+                _update_identifier_evidence(identifier_evidence, frame)
                 if not identifier_matches(frame):
                     continue
                 if changing_only and (
@@ -688,6 +819,8 @@ def create_app(
                 for key, item in summary_by_key.items()
             ):
                 raise ValueError("CAN identifier frame count mismatch")
+            if all_identifiers != _summarize_identifier_evidence(identifier_evidence):
+                raise ValueError("CAN identifier summary does not match frame evidence")
             for source in (manifest, summary):
                 if "frame_count" in source and (
                     not isinstance(source["frame_count"], int)
