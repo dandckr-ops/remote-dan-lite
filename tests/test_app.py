@@ -55,7 +55,7 @@ def test_usb_inventory_is_exposed_read_only_until_virtualhere_is_commissioned(tm
             "serial": "bridge-1",
             "product_name": "CP210x UART Bridge",
             "topology_path": "1-1",
-            "route": "unknown",
+            "route": "local",
         }],
         "routing_control": {
             "available": False,
@@ -65,14 +65,37 @@ def test_usb_inventory_is_exposed_read_only_until_virtualhere_is_commissioned(tm
 
 
 class FakeRoutingClient:
-    def __init__(self) -> None:
+    def __init__(self, allowed_devices: list[str] | None = None) -> None:
         self.requests: list[dict[str, object]] = []
+        self.allowed_devices = allowed_devices or []
 
     def request(self, payload: dict[str, object]) -> dict[str, object]:
         self.requests.append(payload)
         if payload["action"] == "status":
-            return {"available": True, "inventory_revision": "a" * 64, "allowed_devices": []}
+            return {"available": True, "inventory_revision": "a" * 64, "allowed_devices": self.allowed_devices}
         return {"inventory_revision": payload["inventory_revision"], "allowed_devices": ["084f/c050"]}
+
+
+def test_usb_routing_inventory_marks_existing_virtualhere_allowlist(tmp_path: Path) -> None:
+    routing = FakeRoutingClient(allowed_devices=["084f/c050"])
+    app = create_app(
+        data_dir=tmp_path,
+        routing_client=routing,
+        usb_inventory_probe=lambda: [{
+            "key": "usb:084f:c050:ecom:1-1",
+            "vendor_id": "084f",
+            "product_id": "c050",
+            "serial": "ecom",
+            "product_name": "ECOM",
+            "topology_path": "1-1",
+            "route": "unknown",
+        }],
+    )
+
+    response = TestClient(app).get("/api/usb/devices")
+
+    assert response.status_code == 200
+    assert response.json()["devices"][0]["route"] == "virtualhere"
 
 
 def test_usb_routing_apply_requires_explicit_confirmation_and_uses_helper(tmp_path: Path) -> None:
