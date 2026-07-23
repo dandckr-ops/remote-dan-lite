@@ -276,7 +276,18 @@ function showLatestMetadata(run) {
 
 function showNetwork(run) {
   if (!run) return;
-  setImage($("#can-overview"), $("#can-empty-preview"), run);
+  const previewChannels = run.summary?.preview_channels || [];
+  const canOnlyPreview = previewChannels.length === 2
+    && previewChannels[0] === "CAN-H"
+    && previewChannels[1] === "CAN-L";
+  if (canOnlyPreview) {
+    setImage($("#can-overview"), $("#can-empty-preview"), run);
+  } else {
+    $("#can-overview").classList.add("hidden");
+    $("#can-empty-preview").classList.remove("hidden");
+    $("#can-empty-preview strong").textContent = "Legacy network preview withheld";
+    $("#can-empty-preview span").textContent = "Its image may include a VBAT waveform. Run a new network capture for CAN-H/CAN-L-only evidence.";
+  }
   const report = $("#can-latest-report");
   report.href = artifactUrl(run, "report.pdf");
   report.classList.remove("hidden");

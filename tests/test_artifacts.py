@@ -36,6 +36,8 @@ def test_capture_manager_writes_field_evidence_artifacts(tmp_path: Path) -> None
     saved = json.loads((run_dir / "manifest.json").read_text())
     assert saved == manifest
     assert saved["sha256"]["capture.csv"]
+    assert saved["summary"]["preview_channels"] == ["CAN-H", "CAN-L"]
+    assert "VBAT" not in saved["summary"]["preview_channels"]
 
 
 def test_capture_labels_are_sanitized_for_run_identifiers(tmp_path: Path) -> None:

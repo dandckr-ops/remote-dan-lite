@@ -487,6 +487,7 @@ class CaptureManager:
             "sample_interval_us": data.preset.sample_interval_us,
             "duration_ms": data.preset.duration_ms,
             "channel_stats": {name: _stats(values) for name, values in data.channels.items()},
+            "preview_channels": ["CAN-H", "CAN-L"] if data.profile == "network" else data.channel_names,
             "scope_config": config_payload,
             "overflow_channels": list(data.overflow_channels),
         }

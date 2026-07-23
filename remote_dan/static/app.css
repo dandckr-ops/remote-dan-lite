@@ -95,8 +95,8 @@ h1 span { color: var(--muted); font-weight: 400; }
 .panel-heading p { margin: 0; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; text-align: right; }
 .section-number { color: var(--muted); font-size: 10px; }
 
-.overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
-.battery-card, .latest-card, .node-card, .workflow-card { min-height: 250px; }
+.overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.latest-card, .node-card, .workflow-card { min-height: 250px; }
 .digital-readout { display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 30px 18px 12px; }
 .digital-readout strong { color: var(--amber); font-family: var(--condensed); font-size: clamp(76px, 10vw, 132px); font-weight: 600; line-height: .8; letter-spacing: .025em; font-variant-numeric: tabular-nums; text-shadow: 0 0 28px rgba(255, 188, 66, .16); }
 .digital-readout span { color: var(--muted); font-family: var(--condensed); font-size: 30px; }
@@ -156,6 +156,13 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .can-capture-panel { margin-bottom: 18px; }
 .can-capture-form { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(150px, .55fr) minmax(150px, .55fr) minmax(220px, .7fr); align-items: end; gap: 12px; padding: 18px 20px; }
 .can-capture-form .capture-button { grid-column: auto; min-height: 44px; }
+.can-evidence-layout { display: grid; }
+.can-battery-gauge { min-height: 245px; display: grid; grid-template-columns: minmax(220px, .32fr) minmax(300px, .44fr) minmax(300px, 1fr); align-items: stretch; border-bottom: 1px solid var(--rule); background: radial-gradient(circle at 43% 46%, rgba(255, 188, 66, .09), transparent 55%); }
+.can-battery-gauge .scope-gauge-label { align-items: flex-start; justify-content: center; flex-direction: column; border-right: 1px solid var(--rule); border-bottom: 0; }
+.can-battery-gauge .scope-gauge-label strong { color: var(--cream); font-size: 24px; }
+.can-battery-readout { border-right: 1px solid var(--rule); padding: 50px 24px 36px; }
+.can-battery-readout strong { font-size: clamp(88px, 9vw, 126px); }
+.can-battery-gauge .readout-detail { display: grid; place-content: center; padding: 28px; text-align: left; font-size: 11px; }
 .network-evidence-layout { display: grid; grid-template-columns: minmax(280px, .34fr) minmax(0, 1fr); }
 .scope-voltage-gauge { min-width: 0; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--rule); background: radial-gradient(circle at 50% 40%, rgba(255, 188, 66, .07), transparent 62%); }
 .scope-gauge-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid rgba(40, 65, 54, .6); text-transform: uppercase; }
@@ -234,11 +241,17 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .can-capture-form { grid-template-columns: 1fr 1fr; }
   .can-capture-form .capture-button { grid-column: 1 / -1; }
+  .overview-grid { grid-template-columns: 1fr 1fr; }
+  .workflow-card { grid-column: 1 / -1; }
+  .can-battery-gauge { grid-template-columns: minmax(200px, .42fr) minmax(280px, .58fr); }
+  .can-battery-gauge .readout-detail { grid-column: 1 / -1; border-top: 1px solid var(--rule); text-align: center; }
 }
 
 @media (max-width: 900px) {
   .overview-grid { grid-template-columns: 1fr; }
-  .battery-card, .latest-card, .node-card, .workflow-card { min-height: auto; }
+  .latest-card, .node-card, .workflow-card { min-height: auto; }
+  .workflow-card { grid-column: auto; }
+  .can-battery-gauge { grid-template-columns: minmax(180px, .4fr) minmax(0, 1fr); }
   .network-evidence-layout { grid-template-columns: 1fr; }
   .scope-voltage-gauge { border-right: 0; border-bottom: 1px solid var(--rule); }
   .scope-voltage-gauge .readout-detail { margin-top: 0; }
@@ -262,6 +275,10 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .panel-heading > div { width: 100%; }
   .panel-heading p { text-align: left; }
   .digital-readout strong { font-size: 82px; }
+  .can-battery-gauge { min-height: 0; grid-template-columns: 1fr; }
+  .can-battery-gauge .scope-gauge-label { min-height: 82px; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .can-battery-readout { border-right: 0; padding: 42px 16px 24px; }
+  .can-battery-gauge .readout-detail { grid-column: auto; text-align: center; padding: 18px; }
   .workflow-body { grid-template-columns: 1fr; }
   .workflow-body p { grid-column: 1; }
   .profile-buttons { grid-template-columns: 1fr 1fr; }
