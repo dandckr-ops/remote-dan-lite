@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from remote_dan.capture import CaptureManager, CaptureRequest, SimulatorBackend
-from remote_dan.database import EvidenceDatabase
+from remote_dan.database import EvidenceDatabase, SCHEMA_SQL
 
 
 def test_database_preserves_asset_case_session_capture_lineage(tmp_path: Path) -> None:
@@ -161,3 +161,241 @@ def test_capture_manager_assigns_database_ids_to_capture_and_artifacts(tmp_path:
     }
     assert all(artifact["size_bytes"] > 0 for artifact in saved["artifacts"])
     assert all(len(artifact["sha256"]) == 64 for artifact in saved["artifacts"])
+
+
+def test_database_migrates_v1_without_losing_existing_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "remote-dan.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA_SQL)
+    connection.execute("PRAGMA user_version = 1")
+    connection.execute(
+        """
+        INSERT INTO captures (
+            run_id, captured_at, capture_type, label, backend, status
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("legacy-run", "2026-07-23T12:00:00+00:00", "scope", "Legacy", "simulator", "complete"),
+    )
+    capture_id = int(connection.execute("SELECT id FROM captures").fetchone()[0])
+    connection.execute(
+        """
+        INSERT INTO artifacts (
+            capture_id, created_at, kind, filename, relative_path,
+            media_type, size_bytes, sha256
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            capture_id,
+            "2026-07-23T12:00:01+00:00",
+            "manifest",
+            "manifest.json",
+            "legacy-run/manifest.json",
+            "application/json",
+            42,
+            "a" * 64,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    database = EvidenceDatabase(path)
+    database.initialize()
+
+    migrated = sqlite3.connect(path)
+    assert migrated.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert migrated.execute("SELECT run_id FROM captures").fetchone()[0] == "legacy-run"
+    assert migrated.execute("SELECT filename FROM artifacts").fetchone()[0] == "manifest.json"
+    assert "customer_id" in {
+        row[1] for row in migrated.execute("PRAGMA table_info(diagnostic_cases)")
+    }
+    assert migrated.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'customers'"
+    ).fetchone() is not None
+    migrated.close()
+
+
+def test_database_creates_customer_vehicle_and_diagnostic_session_context(
+    tmp_path: Path,
+) -> None:
+    database = EvidenceDatabase(tmp_path / "remote-dan.sqlite3")
+    database.initialize()
+
+    customer_id = database.create_customer(
+        name="Example Customer",
+        company="Example Fleet",
+        phone="555-0100",
+        email="service@example.invalid",
+        notes="Prefers text updates",
+    )
+    vehicle_id = database.create_vehicle(
+        display_name="2009 Subaru Forester",
+        vin="JF2SH63689G000000",
+        make="Subaru",
+        model="Forester",
+        year=2009,
+        engine="2.5L",
+        asset_tag="customer-forester",
+    )
+    context = database.create_diagnostic_session(
+        customer_id=customer_id,
+        vehicle_id=vehicle_id,
+        title="Generic OBD scan",
+        purpose="Read emissions DTCs and live data",
+        complaint="MIL history",
+        operator_name="Daniel",
+    )
+
+    assert context["customer_id"] == customer_id
+    assert context["vehicle_id"] == vehicle_id
+    assert isinstance(context["case_id"], int)
+    assert isinstance(context["session_id"], int)
+    assert database.list_customers()[0]["name"] == "Example Customer"
+    assert database.list_vehicles()[0]["vin"] == "JF2SH63689G000000"
+
+    with pytest.raises(ValueError, match="VIN already exists"):
+        database.create_vehicle(
+            display_name="Duplicate",
+            vin="jf2sh63689g000000",
+        )
+
+
+def test_database_persists_obd_snapshot_dtc_and_live_value_lineage(
+    tmp_path: Path,
+) -> None:
+    database = EvidenceDatabase(tmp_path / "remote-dan.sqlite3")
+    database.initialize()
+    customer_id = database.create_customer(name="Bench Customer")
+    vehicle_id = database.create_vehicle(
+        display_name="Forester",
+        vin="JF2SH63689G000001",
+    )
+    context = database.create_diagnostic_session(
+        customer_id=customer_id,
+        vehicle_id=vehicle_id,
+        title="OBD proof",
+        purpose="Read-only scan",
+    )
+    connection_id = database.create_obd_connection(
+        session_id=context["session_id"],
+        provider="obdlink-sx",
+        adapter_identity="OBDLink SX r4.2 / STN1130 v4.0.1",
+        stable_path="/dev/serial/by-id/obdlink-test",
+        protocol="ISO 15765-4 CAN 11/500",
+        responder_ids=["7E8"],
+        voltage=13.9,
+    )
+    capture_id = database.create_capture(
+        session_id=context["session_id"],
+        run_id="obd-proof-001",
+        captured_at="2026-07-23T15:46:02+00:00",
+        capture_type="obd_scan",
+        test_type="faults",
+        label="Generic OBD fault snapshot",
+        backend="obdlink-sx",
+        status="complete",
+    )
+    snapshot_id = database.create_obd_snapshot(
+        connection_id=connection_id,
+        session_id=context["session_id"],
+        capture_id=capture_id,
+        kind="faults",
+        provider="obdlink-sx",
+        protocol="ISO 15765-4 CAN 11/500",
+        raw_responses={"03": ["7E8 06 43 03 01 02 01 13"]},
+        parsed={"mil_on": False, "dtc_count": 3},
+    )
+    database.add_obd_dtcs(
+        snapshot_id,
+        [
+            {
+                "state": "stored",
+                "ecu": "7E8",
+                "code": "P0102",
+                "description": "Mass or volume air flow circuit low",
+            },
+            {
+                "state": "stored",
+                "ecu": "7E8",
+                "code": "P0113",
+                "description": "Intake air temperature circuit high",
+            },
+        ],
+    )
+    database.add_obd_live_values(
+        snapshot_id,
+        [
+            {
+                "pid": "0C",
+                "name": "Engine speed",
+                "value": 0.0,
+                "unit": "rpm",
+                "ecu": "7E8",
+                "sampled_at": "2026-07-23T15:46:02+00:00",
+                "fresh": True,
+                "raw_hex": "0000",
+                "error": None,
+            }
+        ],
+    )
+    database.close_obd_connection(connection_id, status="closed")
+
+    snapshot = database.get_obd_snapshot(snapshot_id)
+
+    assert snapshot is not None
+    assert snapshot["capture_id"] == capture_id
+    assert snapshot["session_id"] == context["session_id"]
+    assert snapshot["raw_responses"]["03"][0].startswith("7E8")
+    assert [item["code"] for item in snapshot["dtcs"]] == ["P0102", "P0113"]
+    assert snapshot["live_values"][0]["unit"] == "rpm"
+    assert database.list_obd_snapshots(context["session_id"])[0]["id"] == snapshot_id
+
+
+def test_database_obd_clear_events_are_append_only(tmp_path: Path) -> None:
+    path = tmp_path / "remote-dan.sqlite3"
+    database = EvidenceDatabase(path)
+    database.initialize()
+    customer_id = database.create_customer(name="Bench Customer")
+    vehicle_id = database.create_vehicle(display_name="Vehicle")
+    context = database.create_diagnostic_session(
+        customer_id=customer_id,
+        vehicle_id=vehicle_id,
+        title="Clear audit",
+        purpose="Simulator clear test",
+    )
+    connection_id = database.create_obd_connection(
+        session_id=context["session_id"],
+        provider="obd-simulator",
+        adapter_identity="simulator",
+        stable_path=None,
+        protocol="simulated ISO 15765-4",
+        responder_ids=["7E8"],
+        voltage=13.8,
+    )
+
+    event_id = database.record_obd_clear_event(
+        session_id=context["session_id"],
+        connection_id=connection_id,
+        actor="Daniel",
+        confirmation_text="CLEAR 000001",
+        command="04",
+        before_snapshot_id=None,
+        after_snapshot_id=None,
+        outcome="simulated_success",
+        response={"7E8": "44"},
+        ambiguous=False,
+    )
+    event = database.get_obd_clear_event(event_id)
+
+    assert event is not None
+    assert event["outcome"] == "simulated_success"
+    assert event["response"] == {"7E8": "44"}
+
+    connection = sqlite3.connect(path)
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        connection.execute(
+            "UPDATE obd_clear_events SET outcome = 'changed' WHERE id = ?",
+            (event_id,),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        connection.execute("DELETE FROM obd_clear_events WHERE id = ?", (event_id,))
+    connection.close()
