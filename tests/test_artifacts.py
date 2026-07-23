@@ -114,3 +114,42 @@ def test_can_analysis_preset_persists_structured_signal_intelligence(tmp_path: P
         (tmp_path / manifest["run_id"] / "summary.json").read_text()
     )
     assert saved_summary["can_analysis"] == analysis
+
+
+def test_can_workspace_decodes_reversed_pair_and_preserves_polarity_warning(
+    tmp_path: Path,
+) -> None:
+    class ReversedCanBackend:
+        def capture(self, request: CaptureRequest) -> CaptureData:
+            data = SimulatorBackend(seed=2406).capture(request)
+            channels = dict(data.channels)
+            channels["CAN-H"], channels["CAN-L"] = (
+                data.channels["CAN-L"],
+                data.channels["CAN-H"],
+            )
+            return CaptureData(
+                backend=data.backend,
+                preset=data.preset,
+                time_us=data.time_us,
+                channels=channels,
+                profile=data.profile,
+                channel_configs=data.channel_configs,
+                overflow_channels=data.overflow_channels,
+            )
+
+    manager = CaptureManager(tmp_path, backend=ReversedCanBackend())
+    manifest = manager.run(CaptureRequest(
+        label="reversed CAN evidence",
+        preset="can-analysis",
+        mode="simulator",
+        capture_type="can",
+        profile="network",
+    ))
+
+    summary = manifest["summary"]
+    assert summary["can_polarity"] == "reversed"
+    assert summary["can_analysis"]["crc_valid_header_count"] > 0
+    assert any(
+        "reversed" in warning.lower()
+        for warning in summary["can_analysis"]["warnings"]
+    )
