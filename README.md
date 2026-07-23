@@ -5,13 +5,13 @@ Remote Dan Lite is a headless field-diagnostic sidecar for network-controlled Pi
 The appliance stays connected to the machine while the technician keeps a normal laptop as the operator surface. Its job is not to claim a diagnosis. Its job is to preserve trustworthy raw evidence, derived measurements, timing context, and operator findings in one durable session.
 
 <p align="center">
-  <a href="docs/remote-dan-lite-v1-concept.html">
+  <a href="docs/assets/remote-dan-lite-v1-concept.png">
     <img src="docs/assets/remote-dan-lite-v1-concept.png" alt="Remote Dan Lite v1 enclosure, operator-surface, evidence-index, and Modbus-satellite concept" width="1100">
   </a>
 </p>
 
 <p align="center">
-  <a href="docs/remote-dan-lite-v1-concept.html"><strong>Open the self-contained Remote Dan Lite v1 concept document</strong></a>
+  <a href="docs/assets/remote-dan-lite-v1-concept.png"><strong>View the full-resolution Remote Dan Lite v1 concept</strong></a>
   ·
   <a href="docs/architecture.md"><strong>Read the architecture and status boundaries</strong></a>
 </p>
