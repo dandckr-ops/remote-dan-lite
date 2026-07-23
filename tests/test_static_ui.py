@@ -464,8 +464,8 @@ def test_obd_browser_code_fences_reads_recovers_polling_and_has_uuid_fallback() 
 def test_changed_static_assets_use_combined_release_cache_key() -> None:
     markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert "/static/app.css?v=obd-truth-v3" in markup
-    assert "/static/app.js?v=obd-truth-v3" in markup
+    assert "/static/app.css?v=obd-vin-v4" in markup
+    assert "/static/app.js?v=obd-vin-v4" in markup
     assert "/static/can_request_gate.js?v=can-decode-v1-remediation2" in markup
     assert "bus-discovery-1" not in markup
 
@@ -485,12 +485,17 @@ def test_obd_fault_and_vehicle_views_state_exact_scope_and_availability() -> Non
     assert "Mode $09 PID $02 VIN only" in vehicle_panel
     assert "VIN validation" in vehicle_panel
     assert "VIN reporting coverage" in vehicle_panel
+    assert 'class="obd-vin-result"' in vehicle_panel
+    assert 'id="obd-vin" aria-live="polite" tabindex="-1"' in vehicle_panel
+    assert "Read VIN from ECM" in vehicle_panel
     assert "<dt>Protocol</dt>" not in vehicle_panel
     assert "<dt>Adapter</dt>" not in vehicle_panel
     assert "<dt>Detected ECUs</dt>" not in vehicle_panel
     assert 'payload.vin_status === "partial"' in script
     assert 'payload.vin_status === "no_data"' in script
+    assert "VIN READ SUCCESSFULLY" in script
     assert 'status === "no_data" ? "Unavailable"' in script
+    assert ".obd-vin-result" in (STATIC_DIR / "app.css").read_text(encoding="utf-8")
 
 
 def test_operator_source_selectors_do_not_offer_simulator_or_auto_fallback() -> None:

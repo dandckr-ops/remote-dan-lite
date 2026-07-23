@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=obd-truth-v3">
+  <link rel="stylesheet" href="/static/app.css?v=obd-vin-v4">
 </head>
 <body>
   <div class="shell">
@@ -444,14 +444,17 @@
         <section class="panel obd-subpanel" id="obd-panel-vehicle-info" role="tabpanel" aria-labelledby="obd-tab-vehicle-info" data-obd-panel="vehicle-info" hidden>
           <div class="panel-heading">
             <div><span class="section-number">06C</span><h2>Vehicle ID</h2></div>
-            <div class="obd-actions"><button class="plain-button" id="obd-vehicle-refresh-button" type="button" disabled>Read VIN</button><button class="plain-button" id="obd-vehicle-save-button" type="button" disabled>Read and save</button></div>
+            <div class="obd-actions"><button class="plain-button" id="obd-vehicle-refresh-button" type="button" disabled>Read VIN from ECM</button><button class="plain-button" id="obd-vehicle-save-button" type="button" disabled>Read and save</button></div>
           </div>
           <p class="obd-boundary">Mode $09 PID $02 VIN only. Adapter, protocol, and responding ECU details remain in the connection summary above.</p>
           <div class="message" id="obd-vehicle-message" aria-live="polite">No Mode $09 VIN response loaded.</div>
+          <div class="obd-vin-result" id="obd-vin-result">
+            <span>VIN reported by ECM</span>
+            <strong id="obd-vin" aria-live="polite" tabindex="-1">—</strong>
+            <small>VIN validation · <b id="obd-vin-validation">Not read</b></small>
+          </div>
           <dl class="obd-vehicle-facts">
-            <div><dt>VIN reported by ECM</dt><dd id="obd-vin">—</dd></div>
             <div><dt>Reporting ECM response ID</dt><dd id="obd-vin-ecu">—</dd></div>
-            <div><dt>VIN validation</dt><dd id="obd-vin-validation">—</dd></div>
             <div><dt>VIN reporting coverage</dt><dd id="obd-vin-coverage">—</dd></div>
           </dl>
         </section>
@@ -542,6 +545,6 @@
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
   <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=obd-truth-v3" defer></script>
+  <script src="/static/app.js?v=obd-vin-v4" defer></script>
 </body>
 </html>

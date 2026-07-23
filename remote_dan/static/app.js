@@ -1342,8 +1342,9 @@ function clearObdReadings(reason = "Disconnected. Previous readings are no longe
   setMessage("#obd-fault-message", reason);
   $("#obd-vin").textContent = "—";
   $("#obd-vin-ecu").textContent = "—";
-  $("#obd-vin-validation").textContent = "—";
+  $("#obd-vin-validation").textContent = "Not read";
   $("#obd-vin-coverage").textContent = "—";
+  $("#obd-vin-result").classList.remove("success", "error");
   setMessage("#obd-vehicle-message", reason);
 }
 
@@ -1563,13 +1564,18 @@ async function readObdFaults() {
 function renderObdVehicleInfo(payload) {
   state.obd.vehicleInfo = payload;
   const first = payload.vins?.[0];
-  $("#obd-vin").textContent = first?.vin || "Not reported";
+  const vinNode = $("#obd-vin");
+  const resultNode = $("#obd-vin-result");
+  vinNode.textContent = first?.vin || "Not reported";
   $("#obd-vin-ecu").textContent = first?.ecu || "—";
   $("#obd-vin-validation").textContent = first ? "Valid 17-character Mode $09 VIN" : "Unavailable";
   $("#obd-vin-coverage").textContent = payload.vins?.length
     ? `${payload.vins.length} ECM response${payload.vins.length === 1 ? "" : "s"} contained a valid VIN`
     : "No valid VIN response";
   const errorCount = (payload.errors || []).length;
+  const successful = payload.vin_status === "complete" && !payload.vin_mismatch;
+  resultNode.classList.toggle("success", successful);
+  resultNode.classList.toggle("error", payload.vin_mismatch || payload.vin_status === "partial" || payload.vin_status === "error");
   if (payload.vin_mismatch) {
     setMessage("#obd-vehicle-message", "Warning: different ECUs reported different VINs. No VIN was selected silently.", "error");
   } else if (payload.vin_status === "partial") {
@@ -1579,7 +1585,11 @@ function renderObdVehicleInfo(payload) {
   } else if (payload.vin_status === "no_data") {
     setMessage("#obd-vehicle-message", "VIN unavailable: the ECM returned no Mode $09 PID $02 data.");
   } else {
-    setMessage("#obd-vehicle-message", `Valid VIN read from ECM response ${first.ecu}.`, "success");
+    setMessage("#obd-vehicle-message", `VIN READ SUCCESSFULLY · Valid 17-character VIN from ECM response ${first.ecu}.`, "success");
+    window.requestAnimationFrame(() => {
+      vinNode.focus({preventScroll: true});
+      vinNode.scrollIntoView({behavior: "smooth", block: "nearest"});
+    });
   }
 }
 
