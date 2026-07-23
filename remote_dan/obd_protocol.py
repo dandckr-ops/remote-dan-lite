@@ -21,17 +21,17 @@ DTC_DESCRIPTIONS = {
 
 PID_DEFINITIONS: dict[int, tuple[str, str, int]] = {
     0x04: ("Calculated engine load", "%", 1),
-    0x05: ("Engine coolant temperature", "°C", 1),
+    0x05: ("Engine coolant temperature", "°F", 1),
     0x06: ("Short term fuel trim bank 1", "%", 1),
     0x07: ("Long term fuel trim bank 1", "%", 1),
     0x08: ("Short term fuel trim bank 2", "%", 1),
     0x09: ("Long term fuel trim bank 2", "%", 1),
-    0x0B: ("Intake manifold pressure", "kPa", 1),
+    0x0B: ("Intake manifold pressure", "psi", 1),
     0x0C: ("Engine speed", "rpm", 2),
-    0x0D: ("Vehicle speed", "km/h", 1),
+    0x0D: ("Vehicle speed", "mph", 1),
     0x0E: ("Timing advance", "°", 1),
-    0x0F: ("Intake air temperature", "°C", 1),
-    0x10: ("Mass air flow", "g/s", 2),
+    0x0F: ("Intake air temperature", "°F", 1),
+    0x10: ("Mass air flow", "lb/min", 2),
     0x11: ("Throttle position", "%", 1),
     0x1F: ("Engine run time", "s", 2),
     0x2F: ("Fuel level", "%", 1),
@@ -204,19 +204,19 @@ def decode_live_pid(
     if pid in {0x04, 0x11, 0x2F}:
         value = a * 100.0 / 255.0
     elif pid in {0x05, 0x0F}:
-        value = float(a - 40)
+        value = (a - 40) * 9.0 / 5.0 + 32.0
     elif pid in {0x06, 0x07, 0x08, 0x09}:
         value = (a - 128) * 100.0 / 128.0
     elif pid == 0x0B:
-        value = float(a)
+        value = a * 0.14503773773020923
     elif pid == 0x0C:
         value = ((a << 8) | b) / 4.0
     elif pid == 0x0D:
-        value = float(a)
+        value = a * 0.621371192237334
     elif pid == 0x0E:
         value = a / 2.0 - 64.0
     elif pid == 0x10:
-        value = ((a << 8) | b) / 100.0
+        value = (((a << 8) | b) / 100.0) * 60.0 / 453.59237
     elif pid == 0x1F:
         value = float((a << 8) | b)
     elif pid == 0x42:

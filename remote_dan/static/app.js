@@ -538,7 +538,7 @@ function bindBusSurveyForm() {
     } else if (!hardwareSafe) {
       setMessage("#sniffer-message", "Hardware capture is blocked until all four electrical-safety attestations are recorded.", "error");
     } else {
-      setMessage("#sniffer-message", mode.value === "hardware" ? "Harness and safety attestations recorded. Survey remains receive-only." : "Simulator selected; no physical signal connection is used.");
+      setMessage("#sniffer-message", "Harness and safety attestations recorded. Survey remains receive-only.");
     }
   };
   harness.addEventListener("change", updateHarnessGate);

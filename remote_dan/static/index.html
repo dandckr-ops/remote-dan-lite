@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=can-obd-v1">
+  <link rel="stylesheet" href="/static/app.css?v=can-obd-imperial-v2">
 </head>
 <body>
   <div class="shell">
@@ -90,7 +90,7 @@
           <form id="sniffer-form" class="sniffer-form">
             <label class="field"><span>Evidence label</span><input id="sniffer-label" maxlength="80" value="unknown bus survey" autocomplete="off"></label>
             <label class="field"><span>Verified connection</span><select id="sniffer-harness"><option value="unverified" selected>Unknown / unverified — blocked</option><option value="can-network">Commissioned CAN harness · A VBAT / B CAN-H / C CAN-L</option><option value="protected-differential">Protected differential input · B positive / C negative</option><option value="protected-single-ended">Protected single-ended input · A signal</option></select></label>
-            <label class="field"><span>Source</span><select id="sniffer-mode"><option value="simulator">Simulator</option><option value="hardware">Pico hardware</option></select></label>
+            <label class="field"><span>Source</span><select id="sniffer-mode"><option value="hardware">Pico hardware</option></select></label>
             <fieldset class="sniffer-safety">
               <legend>Hardware safety attestations</legend>
               <label><input id="sniffer-low-voltage" type="checkbox"> Low-voltage signal domain confirmed — not mains, hybrid/EV HV, ignition secondary, injector primary, or an unknown inductive output.</label>
@@ -169,8 +169,6 @@
               <label class="field">
                 <span>Source</span>
                 <select id="scope-mode" name="mode">
-                  <option value="auto">Auto</option>
-                  <option value="simulator">Simulator</option>
                   <option value="hardware">Pico hardware</option>
                 </select>
               </label>
@@ -252,7 +250,7 @@
           <form id="serial-capture-form" class="serial-capture-form">
             <label class="field serial-label"><span>Evidence label</span><input id="serial-label" maxlength="80" value="SEL serial receive proof" autocomplete="off"></label>
             <label class="field"><span>Duration</span><select id="serial-duration"><option value="1">1 second</option><option value="2">2 seconds</option><option value="5" selected>5 seconds</option><option value="10">10 seconds</option><option value="30">30 seconds</option></select></label>
-            <label class="field"><span>Source</span><select id="serial-mode"><option value="auto">Auto</option><option value="hardware">SEL C662 hardware</option><option value="simulator">Simulator</option></select></label>
+            <label class="field"><span>Source</span><select id="serial-mode"><option value="hardware">SEL C662 hardware</option></select></label>
             <label class="field"><span>Baud</span><select id="serial-baud"><option>300</option><option>600</option><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option></select></label>
             <label class="field"><span>Data bits</span><select id="serial-data-bits"><option>5</option><option>6</option><option>7</option><option selected>8</option></select></label>
             <label class="field"><span>Parity</span><select id="serial-parity"><option value="N" selected>None</option><option value="E">Even</option><option value="O">Odd</option></select></label>
@@ -264,7 +262,7 @@
 
         <section class="preview panel serial-preview">
           <div class="panel-heading"><div><span class="section-number">03A</span><h2>Byte timing evidence</h2></div><a id="serial-latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a></div>
-          <div class="scope-grid"><div class="empty-preview" id="serial-empty-preview"><div class="reticle"></div><strong>No serial evidence loaded</strong><span>Capture a receive window from the C662 or simulator.</span></div><img id="serial-overview" class="overview hidden" alt="Latest received serial bytes plotted over capture time"></div>
+          <div class="scope-grid"><div class="empty-preview" id="serial-empty-preview"><div class="reticle"></div><strong>No serial evidence loaded</strong><span>Capture a receive window from the C662.</span></div><img id="serial-overview" class="overview hidden" alt="Latest received serial bytes plotted over capture time"></div>
           <div class="serial-decode-grid">
             <article><span>Text preview</span><pre id="serial-text-preview">No decoded text.</pre></article>
             <article><span>Hex preview</span><pre id="serial-hex-preview">No received bytes.</pre></article>
@@ -293,7 +291,7 @@
           <form id="can-capture-form" class="can-capture-form">
             <label class="field"><span>Evidence label</span><input id="can-label" maxlength="80" value="bench CAN proof" autocomplete="off"></label>
             <label class="field"><span>Window</span><select id="can-window"><option value="can-analysis" selected>Analyze · 25 ms · 10 MS/s</option><option value="short">Waveform · 40 ms</option><option value="medium">Waveform · 200 ms</option><option value="long">Waveform · 500 ms</option></select></label>
-            <label class="field"><span>Source</span><select id="can-mode"><option value="auto">Auto</option><option value="simulator">Simulator</option><option value="hardware">Pico hardware</option></select></label>
+            <label class="field"><span>Source</span><select id="can-mode"><option value="hardware">Pico hardware</option></select></label>
             <button class="capture-button" id="can-capture-button" type="submit"><span class="button-mark"></span>Capture network</button>
           </form>
           <div class="message" id="can-message" aria-live="polite">Network harness: A = VBAT through 20:1, B = CAN-H, C = CAN-L.</div>
@@ -386,7 +384,7 @@
           <p class="obd-boundary">SAE J1979 emissions diagnostics through the direct OBDLink SX path. Hardware v1 is commissioned only for ISO 15765-4 CAN 11/500. This is not full Subaru ABS, SRS, EyeSight, body, coding, or programming support.</p>
           <div class="obd-toolbar">
             <label class="field"><span>Diagnostic session</span><select id="obd-session-select"><option value="">No session selected</option></select></label>
-            <label class="field"><span>Provider</span><select id="obd-provider-mode"><option value="simulator">Simulator</option><option value="hardware">OBDLink SX · direct USB</option></select></label>
+            <label class="field"><span>Provider</span><select id="obd-provider-mode"><option value="hardware">OBDLink SX · direct USB</option></select></label>
             <button class="capture-button" id="obd-connect-button" type="button"><span class="button-mark"></span>Connect</button>
             <button class="plain-button" id="obd-disconnect-button" type="button" disabled>Disconnect</button>
           </div>
@@ -497,7 +495,7 @@
           <form id="modbus-scan-form" class="modbus-scan-form">
             <label class="field"><span>Evidence label</span><input id="modbus-label" maxlength="80" value="connected Modbus network" autocomplete="off"></label>
             <label class="field"><span>Interface and connected subnet</span><select id="modbus-subnet"><option value="">Loading interfaces…</option></select></label>
-            <label class="field"><span>Source</span><select id="modbus-mode"><option value="network" selected>Connected network</option><option value="simulator">Simulator</option></select></label>
+            <label class="field"><span>Source</span><select id="modbus-mode"><option value="network" selected>Connected network</option></select></label>
             <label class="field"><span>TCP connect timeout</span><select id="modbus-timeout"><option value="200">200 ms</option><option value="300" selected>300 ms</option><option value="500">500 ms</option><option value="750">750 ms</option></select></label>
             <button class="capture-button" id="modbus-scan-button" type="submit"><span class="button-mark"></span>Scan connected network</button>
           </form>
@@ -543,6 +541,6 @@
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
   <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=can-obd-v1" defer></script>
+  <script src="/static/app.js?v=can-obd-imperial-v2" defer></script>
 </body>
 </html>

@@ -464,7 +464,31 @@ def test_obd_browser_code_fences_reads_recovers_polling_and_has_uuid_fallback() 
 def test_changed_static_assets_use_combined_release_cache_key() -> None:
     markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert "/static/app.css?v=can-obd-v1" in markup
-    assert "/static/app.js?v=can-obd-v1" in markup
+    assert "/static/app.css?v=can-obd-imperial-v2" in markup
+    assert "/static/app.js?v=can-obd-imperial-v2" in markup
     assert "/static/can_request_gate.js?v=can-decode-v1-remediation2" in markup
     assert "bus-discovery-1" not in markup
+
+
+def test_operator_source_selectors_do_not_offer_simulator_or_auto_fallback() -> None:
+    markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    expected = {
+        "sniffer-mode": "hardware",
+        "scope-mode": "hardware",
+        "serial-mode": "hardware",
+        "can-mode": "hardware",
+        "obd-provider-mode": "hardware",
+        "modbus-mode": "network",
+    }
+
+    for select_id, only_value in expected.items():
+        select = markup.split(f'id="{select_id}"', 1)[1].split("</select>", 1)[0]
+        assert 'value="simulator"' not in select
+        assert 'value="auto"' not in select
+        assert select.count("<option") == 1
+        assert f'value="{only_value}"' in select
+
+    assert "Capture a receive window from the C662 or simulator." not in markup
+    assert "Simulator selected; no physical signal connection is used." not in (
+        STATIC_DIR / "app.js"
+    ).read_text(encoding="utf-8")

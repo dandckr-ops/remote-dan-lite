@@ -331,7 +331,7 @@ class CapturePayload(BaseModel):
     preset: Literal[
         "can-analysis", "short", "medium", "long", "1s", "2s", "5s", "10s"
     ] = "short"
-    mode: Literal["auto", "hardware", "simulator"] = "auto"
+    mode: Literal["auto", "hardware", "simulator"] = "hardware"
     capture_type: Literal["scope", "serial", "can", "test"] = "scope"
     profile: Literal[
         "network",
@@ -360,7 +360,7 @@ class ScopeChannelPayload(BaseModel):
 class SerialCapturePayload(BaseModel):
     label: str = Field(default="serial receive capture", min_length=1, max_length=80)
     duration_s: Literal[1, 2, 5, 10, 30] = 5
-    mode: Literal["auto", "hardware", "simulator"] = "auto"
+    mode: Literal["auto", "hardware", "simulator"] = "hardware"
     baud: Literal[300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] = 9600
     data_bits: Literal[5, 6, 7, 8] = 8
     parity: Literal["N", "E", "O"] = "N"
@@ -373,7 +373,7 @@ class BusSurveyPayload(BaseModel):
     harness: Literal[
         "can-network", "protected-differential", "protected-single-ended"
     ]
-    mode: Literal["hardware", "simulator"] = "simulator"
+    mode: Literal["hardware", "simulator"] = "hardware"
     session_id: int | None = Field(default=None, ge=1)
     low_voltage_confirmed: bool = False
     common_reference_confirmed: bool = False
@@ -451,7 +451,7 @@ class DiagnosticSessionPayload(BaseModel):
 
 
 class OBDConnectPayload(BaseModel):
-    mode: Literal["simulator", "hardware"] = "simulator"
+    mode: Literal["simulator", "hardware"] = "hardware"
     session_id: int | None = Field(default=None, ge=1)
 
 
@@ -761,7 +761,7 @@ def create_app(
             "version": __version__,
             "hostname": socket.gethostname(),
             "capture_ready": True,
-            "default_backend": "hardware" if hardware_ready else "simulator",
+            "default_backend": "hardware" if hardware_ready else "unavailable",
             "hardware": hardware,
             "serial_hardware": serial_hardware,
         }

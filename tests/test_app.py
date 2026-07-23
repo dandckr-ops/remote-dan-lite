@@ -93,7 +93,7 @@ class FakeHardwareOBDProvider(SimulatorOBDProvider):
     name = "obdlink-sx"
 
 
-def test_status_reports_degraded_hardware_and_available_simulator(tmp_path: Path) -> None:
+def test_status_reports_degraded_hardware_as_unavailable(tmp_path: Path) -> None:
     app = create_app(data_dir=tmp_path, hardware_probe=lambda: {
         "driver_available": False,
         "device_present": False,
@@ -106,7 +106,7 @@ def test_status_reports_degraded_hardware_and_available_simulator(tmp_path: Path
     payload = response.json()
     assert payload["service"] == "remote-dan-lite"
     assert payload["capture_ready"] is True
-    assert payload["default_backend"] == "simulator"
+    assert payload["default_backend"] == "unavailable"
     assert payload["hardware"]["driver_available"] is False
 
 
@@ -1504,6 +1504,17 @@ def test_api_obd_clear_prepare_fails_closed_without_authenticated_operator(
 
     assert response.status_code == 403
     assert "authenticated operator" in response.json()["detail"]
+
+
+def test_api_obd_connect_defaults_to_hardware_not_simulator(tmp_path: Path) -> None:
+    app = create_app(data_dir=tmp_path / "captures", db_path=tmp_path / "db.sqlite3")
+    client = TestClient(app)
+
+    response = client.post("/api/obd/connect", json={})
+
+    assert response.status_code == 502
+    assert "hardware" in response.json()["detail"].lower()
+    assert client.get("/api/obd/status").json()["connected"] is False
 
 
 def test_adapter_terminal_failure_is_http_502_and_cannot_create_complete_evidence(
