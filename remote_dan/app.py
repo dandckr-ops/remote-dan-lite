@@ -235,6 +235,8 @@ def _list_can_decode_sources(
             ))
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             continue
+        if not isinstance(manifest, dict):
+            continue
         capture_type = manifest.get("capture_type")
         if capture_type != record.get("capture_type"):
             continue

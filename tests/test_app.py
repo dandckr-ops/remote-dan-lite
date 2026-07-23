@@ -714,6 +714,41 @@ def test_capture_listing_publishes_only_complete_verified_database_manifests(
     }
 
 
+def test_can_decode_source_listing_omits_authoritative_non_object_manifest(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    created = client.post("/api/captures", json={
+        "label": "non-object source manifest",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    manifest_path = capture_root / created["run_id"] / "manifest.json"
+    manifest_path.write_text("[]\n", encoding="utf-8")
+    with app.state.database._connect() as connection:
+        connection.execute(
+            """
+            UPDATE artifacts SET size_bytes = ?, sha256 = ?
+            WHERE capture_id = ? AND filename = 'manifest.json'
+            """,
+            (
+                manifest_path.stat().st_size,
+                hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                created["capture_id"],
+            ),
+        )
+
+    response = client.get("/api/can-decode-sources")
+    assert response.status_code == 200
+    assert created["run_id"] not in {
+        item["run_id"] for item in response.json()["sources"]
+    }
+
+
 @pytest.mark.parametrize(
     "failure",
     ("summary_bytes", "frames_bytes", "line_count", "line_bytes", "malformed_frame"),

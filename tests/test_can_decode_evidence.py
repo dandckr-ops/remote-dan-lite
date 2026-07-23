@@ -384,6 +384,22 @@ def test_source_hash_and_sqlite_run_id_are_authoritative(tmp_path: Path) -> None
         )
 
 
+def test_source_manifest_must_be_a_json_object(tmp_path: Path) -> None:
+    root = tmp_path / "captures"
+    database = EvidenceDatabase(tmp_path / "evidence.sqlite3")
+    database.initialize()
+    source_dir, source_capture_id = _source_capture(root, database)
+    (source_dir / "manifest.json").write_text("[]\n", encoding="utf-8")
+    _refresh_artifact_record(
+        database, source_capture_id, source_dir, "manifest.json"
+    )
+
+    with pytest.raises(ValueError, match="manifest.*malformed"):
+        CanDecodeManager(root, database=database).run(
+            CanDecodeRequest(source_run_id="source-can-001", label="reject non-object")
+        )
+
+
 @pytest.mark.parametrize("replacement", ("symlink", "directory"))
 def test_source_artifact_open_rejects_symlink_and_non_regular_replacements(
     tmp_path: Path,

@@ -227,6 +227,8 @@ class CanDecodeManager:
                 max_bytes=MAX_MANIFEST_BYTES,
             )
             source_manifest = json.loads(manifest_bytes)
+            if not isinstance(source_manifest, dict):
+                raise ValueError("source manifest must be a JSON object")
         except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
             raise ValueError("source manifest is missing or malformed") from exc
         if source_manifest.get("run_id") != request.source_run_id:
