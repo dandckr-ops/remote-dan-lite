@@ -723,6 +723,38 @@ def test_can_decode_source_listing_requires_complete_matching_sqlite_rows(
     assert client.get("/api/can-decode-sources").json()["sources"] == []
 
 
+def test_can_decode_source_listing_allows_historical_bus_survey_null_profile_only(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    survey_response = client.post("/api/bus-surveys", json={
+        "label": "historical CAN survey",
+        "harness": "can-network",
+        "mode": "simulator",
+    })
+    assert survey_response.status_code == 201
+    survey = survey_response.json()
+    app.state.database.set_capture_metadata(int(survey["capture_id"]), {})
+
+    direct_response = client.post("/api/captures", json={
+        "label": "direct CAN null profile",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    })
+    assert direct_response.status_code == 201
+    direct = direct_response.json()
+    app.state.database.set_capture_metadata(int(direct["capture_id"]), {})
+
+    sources = client.get("/api/can-decode-sources").json()["sources"]
+    run_ids = {source["run_id"] for source in sources}
+    assert survey["run_id"] in run_ids
+    assert direct["run_id"] not in run_ids
+
+
 def test_can_decode_api_maps_malformed_missing_and_busy_requests(tmp_path: Path) -> None:
     app = create_app(data_dir=tmp_path / "captures", db_path=tmp_path / "evidence.sqlite3")
     client = TestClient(app)

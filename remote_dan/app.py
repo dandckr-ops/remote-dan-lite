@@ -477,7 +477,13 @@ def _list_can_decode_sources(
         if capture_type != record.get("capture_type"):
             continue
         profile = manifest.get("profile")
-        if record.get("metadata", {}).get("profile") != profile:
+        recorded_profile = record.get("metadata", {}).get("profile")
+        if recorded_profile is not None and recorded_profile != profile:
+            continue
+        if (
+            recorded_profile is None
+            and not (capture_type == "bus_survey" and profile == "bus-sniffer")
+        ):
             continue
         summary = manifest.get("summary") if isinstance(manifest.get("summary"), dict) else {}
         classification = summary.get("classification") if isinstance(summary, dict) else {}
@@ -765,8 +771,11 @@ def create_app(
                     and recorded_source_profile != manifest["source_profile"]
                 )
                 or (
-                    manifest["source_capture_type"] != "bus_survey"
-                    and recorded_source_profile != manifest["source_profile"]
+                    recorded_source_profile is None
+                    and not (
+                        manifest["source_capture_type"] == "bus_survey"
+                        and manifest["source_profile"] == "bus-sniffer"
+                    )
                 )
             ):
                 raise OSError("CAN decode parent lineage is not authoritative")

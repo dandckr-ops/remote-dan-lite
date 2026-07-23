@@ -302,7 +302,10 @@ class CanDecodeManager:
         recorded_profile = source_record.get("metadata", {}).get("profile")
         if recorded_profile is not None and recorded_profile != profile:
             raise ValueError("source profile does not match authoritative SQLite")
-        if capture_type != "bus_survey" and recorded_profile != profile:
+        if (
+            recorded_profile is None
+            and not (capture_type == "bus_survey" and profile == "bus-sniffer")
+        ):
             raise ValueError("source profile does not match authoritative SQLite")
         if capture_type == "bus_survey":
             classification = source_manifest.get("summary", {}).get("classification", {})
