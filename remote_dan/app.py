@@ -172,6 +172,26 @@ def _valid_can_frame(frame: object) -> bool:
         return False
     return True
 
+
+def _valid_can_decode_document(document: object, run_id: str) -> bool:
+    if not isinstance(document, dict):
+        return False
+    source_run_id = document.get("source_run_id")
+    writes_performed = document.get("writes_performed")
+    return (
+        document.get("run_id") == run_id
+        and document.get("capture_type") == "can_decode"
+        and isinstance(source_run_id, str)
+        and RUN_ID_PATTERN.fullmatch(source_run_id) is not None
+        and source_run_id not in {".", ".."}
+        and document.get("can_polarity") in {"expected", "reversed"}
+        and document.get("nominal_bitrate_bps") in NOMINAL_BITRATES
+        and isinstance(writes_performed, int)
+        and not isinstance(writes_performed, bool)
+        and writes_performed == 0
+    )
+
+
 STATIC_DIR = Path(__file__).with_name("static")
 MAX_ARTIFACT_DOWNLOAD_BYTES = 64 * 1024 * 1024
 
@@ -588,11 +608,16 @@ def create_app(
             manifest = json.loads(read_authoritative_artifact(
                 capture_dir, record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
             ))
+            identity_fields = (
+                "source_run_id",
+                "can_polarity",
+                "nominal_bitrate_bps",
+                "writes_performed",
+            )
             if (
-                not isinstance(manifest, dict)
-                or not isinstance(summary, dict)
-                or manifest.get("capture_type") != "can_decode"
-                or manifest.get("run_id") != run_id
+                not _valid_can_decode_document(manifest, run_id)
+                or not _valid_can_decode_document(summary, run_id)
+                or any(manifest.get(name) != summary.get(name) for name in identity_fields)
             ):
                 raise OSError("not a CAN decode")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):

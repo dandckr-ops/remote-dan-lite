@@ -355,6 +355,7 @@ def test_can_tab_exposes_accessible_bounded_existing_capture_decode_contract() -
     assert "bindCanDecodeForm();" in script
     assert "frames_truncated" in script
     assert "identifier_limit" in script
+    assert '$("#can-decode-button").disabled = !$("#can-decode-source").value;' in script
 
     styles = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
     assert ".can-decode-table-scroll" in styles

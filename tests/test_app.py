@@ -681,14 +681,22 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         encoding="utf-8",
     )
     identifiers = aggregate_can_identifiers(frames)
+    document_identity = {
+        "run_id": run_id,
+        "capture_type": "can_decode",
+        "source_run_id": "synthetic-source",
+        "can_polarity": "expected",
+        "nominal_bitrate_bps": 500_000,
+        "writes_performed": 0,
+    }
     (run_dir / "summary.json").write_text(json.dumps({
+        **document_identity,
         "frame_count": len(frames),
         "identifier_count": len(identifiers),
         "identifiers": identifiers,
     }))
     (run_dir / "manifest.json").write_text(json.dumps({
-        "run_id": run_id,
-        "capture_type": "can_decode",
+        **document_identity,
         "frame_count": len(frames),
         "identifier_count": len(identifiers),
     }))
@@ -867,7 +875,8 @@ def test_can_decode_result_artifact_bounds_fail_closed(
         "frame_dlc", "frame_payload_byte", "frame_payload_hex", "frame_payload_length",
         "frame_crc", "frame_ack", "frame_bitrate", "frame_timestamp",
         "frame_indices", "chronology", "missing_summary_key", "per_key_count",
-        "total_frame_count", "identifier_count",
+        "total_frame_count", "identifier_count", "document_identity",
+        "document_polarity", "document_bitrate", "document_writes",
     ),
 )
 def test_can_decode_result_strict_schema_and_consistency_fail_closed(
@@ -897,14 +906,22 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
         for index, value in enumerate((0xAA, 0xBB), start=1)
     ]
     identifiers = aggregate_can_identifiers(frames)
+    document_identity = {
+        "run_id": run_id,
+        "capture_type": "can_decode",
+        "source_run_id": "authoritative-source",
+        "can_polarity": "expected",
+        "nominal_bitrate_bps": 500_000,
+        "writes_performed": 0,
+    }
     summary = {
+        **document_identity,
         "frame_count": 2,
         "identifier_count": 1,
         "identifiers": copy.deepcopy(identifiers),
     }
     manifest = {
-        "run_id": run_id,
-        "capture_type": "can_decode",
+        **document_identity,
         "frame_count": 2,
         "identifier_count": 1,
     }
@@ -961,6 +978,14 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
         manifest["frame_count"] = 3
     elif mutation == "identifier_count":
         summary["identifier_count"] = 2
+    elif mutation == "document_identity":
+        summary["source_run_id"] = "different-source"
+    elif mutation == "document_polarity":
+        manifest["can_polarity"] = "sideways"
+    elif mutation == "document_bitrate":
+        summary["nominal_bitrate_bps"] = 123_456
+    elif mutation == "document_writes":
+        manifest["writes_performed"] = 1
 
     files = {
         "frames.jsonl": "".join(json.dumps(value) + "\n" for value in frames),

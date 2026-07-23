@@ -881,6 +881,7 @@ async function loadCanDecodeResult(runId, requestGeneration = null) {
 function bindCanDecodeForm() {
   $("#can-decode-source").addEventListener("change", () => {
     canDecodeRequestGate.invalidate();
+    $("#can-decode-button").disabled = !$("#can-decode-source").value;
   });
   $("#can-decode-form").addEventListener("submit", async (event) => {
     event.preventDefault();
