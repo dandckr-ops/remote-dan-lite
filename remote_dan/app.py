@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import threading
 from typing import Callable, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -12,6 +13,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from remote_dan import __version__
+from remote_dan.bus_survey import (
+    BusSurveyBackend,
+    BusSurveyManager,
+    BusSurveyRequest,
+    BusSurveySimulatorBackend,
+    PicoBusSurveyBackend,
+)
 from remote_dan.capture import (
     ATTENUATIONS,
     COUPLINGS,
@@ -27,6 +35,19 @@ from remote_dan.capture import (
 )
 from remote_dan.database import EvidenceDatabase
 from remote_dan.hardware import probe_pico_hardware
+from remote_dan.modbus_discovery import (
+    MAX_SCAN_HOSTS,
+    MAX_SCAN_WORKERS,
+    bounded_scan_networks,
+    connected_ipv4_networks,
+)
+from remote_dan.modbus_scan import (
+    LiveModbusDiscoveryBackend,
+    ModbusScanBackend,
+    ModbusScanManager,
+    ModbusScanRequest,
+    ModbusSimulatorBackend,
+)
 from remote_dan.serial_analysis import SerialFraming
 from remote_dan.serial_capture import (
     SerialCaptureBackend,
@@ -79,6 +100,31 @@ class SerialCapturePayload(BaseModel):
     data_bits: Literal[5, 6, 7, 8] = 8
     parity: Literal["N", "E", "O"] = "N"
     stop_bits: Literal[1, 2] = 1
+    session_id: int | None = Field(default=None, ge=1)
+
+
+class BusSurveyPayload(BaseModel):
+    label: str = Field(default="unknown bus survey", min_length=1, max_length=80)
+    harness: Literal[
+        "can-network", "protected-differential", "protected-single-ended"
+    ]
+    mode: Literal["hardware", "simulator"] = "simulator"
+    session_id: int | None = Field(default=None, ge=1)
+    low_voltage_confirmed: bool = False
+    common_reference_confirmed: bool = False
+    probe_rating_confirmed: bool = False
+    passive_only_confirmed: bool = False
+
+
+class ModbusScanPayload(BaseModel):
+    label: str = Field(default="Modbus network discovery", min_length=1, max_length=80)
+    interface: str = Field(min_length=1, max_length=32)
+    subnet: str = Field(min_length=3, max_length=43)
+    mode: Literal["network", "simulator"] = "network"
+    connect_timeout_ms: int = Field(default=300, ge=100, le=750)
+    response_timeout_ms: int = Field(default=1250, ge=500, le=1500)
+    hicp_timeout_ms: int = Field(default=1500, ge=250, le=2000)
+    workers: int = Field(default=4, ge=1, le=MAX_SCAN_WORKERS)
     session_id: int | None = Field(default=None, ge=1)
 
 
@@ -140,6 +186,9 @@ def create_app(
     hardware_backend: CaptureBackend | None = None,
     serial_probe: Callable[[], dict[str, object]] = probe_serial_hardware,
     serial_backend: SerialCaptureBackend | None = None,
+    network_probe: Callable[[], tuple[dict[str, str], ...]] = connected_ipv4_networks,
+    modbus_backend: ModbusScanBackend | None = None,
+    bus_survey_backend: BusSurveyBackend | None = None,
 ) -> FastAPI:
     capture_dir = Path(data_dir)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -147,6 +196,7 @@ def create_app(
         Path(db_path) if db_path is not None else capture_dir.with_suffix(".sqlite3")
     )
     database.initialize()
+    pico_lock = threading.Lock()
     simulator = CaptureManager(
         capture_dir,
         backend=SimulatorBackend(),
@@ -155,6 +205,16 @@ def create_app(
     serial_simulator = SerialCaptureManager(
         capture_dir,
         backend=SerialSimulatorBackend(),
+        database=database,
+    )
+    modbus_simulator = ModbusScanManager(
+        capture_dir,
+        backend=ModbusSimulatorBackend(),
+        database=database,
+    )
+    bus_survey_simulator = BusSurveyManager(
+        capture_dir,
+        backend=BusSurveySimulatorBackend(),
         database=database,
     )
 
@@ -167,16 +227,43 @@ def create_app(
     app.state.database = database
     app.state.hardware_probe = hardware_probe
     app.state.serial_probe = serial_probe
+    app.state.network_probe = network_probe
     app.state.simulator = simulator
     app.state.serial_simulator = serial_simulator
+    app.state.modbus_simulator = modbus_simulator
+    app.state.bus_survey_simulator = bus_survey_simulator
+    app.state.pico_lock = pico_lock
     app.state.serial_hardware_manager = (
         SerialCaptureManager(capture_dir, backend=serial_backend, database=database)
         if serial_backend is not None
         else None
     )
+    app.state.modbus_network_manager = (
+        ModbusScanManager(capture_dir, backend=modbus_backend, database=database)
+        if modbus_backend is not None
+        else None
+    )
     app.state.hardware_manager = (
-        CaptureManager(capture_dir, backend=hardware_backend, database=database)
+        CaptureManager(
+            capture_dir,
+            backend=hardware_backend,
+            database=database,
+            lock=pico_lock,
+        )
         if hardware_backend is not None
+        else None
+    )
+    initial_survey_backend = bus_survey_backend or (
+        PicoBusSurveyBackend(hardware_backend) if hardware_backend is not None else None
+    )
+    app.state.bus_survey_hardware_manager = (
+        BusSurveyManager(
+            capture_dir,
+            backend=initial_survey_backend,
+            database=database,
+            lock=pico_lock,
+        )
+        if initial_survey_backend is not None
         else None
     )
 
@@ -207,6 +294,117 @@ def create_app(
     @app.get("/api/captures")
     def captures() -> list[dict[str, object]]:
         return _list_manifests(capture_dir)
+
+    @app.post("/api/bus-surveys", status_code=201)
+    def create_bus_survey(payload: BusSurveyPayload) -> dict[str, object]:
+        request = BusSurveyRequest(
+            label=payload.label,
+            harness=payload.harness,
+            mode=payload.mode,
+            session_id=payload.session_id,
+            low_voltage_confirmed=payload.low_voltage_confirmed,
+            common_reference_confirmed=payload.common_reference_confirmed,
+            probe_rating_confirmed=payload.probe_rating_confirmed,
+            passive_only_confirmed=payload.passive_only_confirmed,
+        )
+        if payload.mode == "simulator":
+            try:
+                return app.state.bus_survey_simulator.run(request)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        hardware = hardware_probe()
+        hardware_ready = bool(
+            hardware.get("driver_available") and hardware.get("device_present")
+        )
+        if not hardware_ready:
+            raise HTTPException(status_code=503, detail=str(hardware.get("reason")))
+        if app.state.bus_survey_hardware_manager is None:
+            if app.state.hardware_manager is None:
+                from remote_dan.pico import PicoPS2000ABackend
+
+                pico_backend = PicoPS2000ABackend()
+                app.state.hardware_manager = CaptureManager(
+                    capture_dir,
+                    backend=pico_backend,
+                    database=database,
+                    lock=pico_lock,
+                )
+            else:
+                pico_backend = app.state.hardware_manager.backend
+            app.state.bus_survey_hardware_manager = BusSurveyManager(
+                capture_dir,
+                backend=PicoBusSurveyBackend(pico_backend),
+                database=database,
+                lock=pico_lock,
+            )
+        try:
+            return app.state.bus_survey_hardware_manager.run(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Bus survey acquisition failed: {exc}",
+            ) from exc
+
+    @app.get("/api/modbus/networks")
+    def modbus_networks() -> dict[str, object]:
+        try:
+            networks = network_probe()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Network inventory failed: {exc}") from exc
+        return {
+            "networks": list(bounded_scan_networks(networks)),
+            "policy": {
+                "ipv4_only": True,
+                "connected_subnets_only": True,
+                "max_hosts": MAX_SCAN_HOSTS,
+                "max_workers": MAX_SCAN_WORKERS,
+                "cooldown_seconds": 60,
+                "deadline_seconds": 30,
+                "writes_enabled": False,
+            },
+        }
+
+    @app.post("/api/modbus/scans", status_code=201)
+    def create_modbus_scan(payload: ModbusScanPayload) -> dict[str, object]:
+        try:
+            networks = network_probe()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Network inventory failed: {exc}") from exc
+        request = ModbusScanRequest(
+            label=payload.label,
+            subnet=payload.subnet,
+            interface=payload.interface,
+            connected_networks=networks,
+            connect_timeout_s=payload.connect_timeout_ms / 1000.0,
+            response_timeout_s=payload.response_timeout_ms / 1000.0,
+            hicp_timeout_s=payload.hicp_timeout_ms / 1000.0,
+            workers=payload.workers,
+            mode=payload.mode,
+            session_id=payload.session_id,
+        )
+        manager = app.state.modbus_simulator
+        if payload.mode == "network":
+            if app.state.modbus_network_manager is None:
+                app.state.modbus_network_manager = ModbusScanManager(
+                    capture_dir,
+                    backend=LiveModbusDiscoveryBackend(),
+                    database=database,
+                )
+            manager = app.state.modbus_network_manager
+        try:
+            return manager.run(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=502, detail=f"Modbus discovery failed: {exc}") from exc
 
     @app.post("/api/serial/captures", status_code=201)
     def create_serial_capture(payload: SerialCapturePayload) -> dict[str, object]:
@@ -303,6 +501,7 @@ def create_app(
                     capture_dir,
                     backend=PicoPS2000ABackend(),
                     database=database,
+                    lock=pico_lock,
                 )
             try:
                 return app.state.hardware_manager.run(

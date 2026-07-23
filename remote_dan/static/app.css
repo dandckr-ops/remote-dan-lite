@@ -51,7 +51,7 @@ h1 span { color: var(--muted); font-weight: 400; }
 
 .tab-bar {
   display: grid;
-  grid-template-columns: repeat(7, minmax(132px, 1fr));
+  grid-template-columns: repeat(9, minmax(132px, 1fr));
   overflow-x: auto;
   border: 1px solid var(--rule);
   background: rgba(7, 16, 13, .94);
@@ -166,6 +166,24 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .serial-decode-grid span { display: block; margin-bottom: 10px; color: var(--amber); font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
 .serial-decode-grid pre { min-height: 120px; max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cream); font: 11px/1.55 var(--mono); }
 .serial-analysis-panel { margin-top: 18px; }
+.bus-sniffer-panel, .modbus-scan-panel { margin-bottom: 18px; }
+.sniffer-form, .modbus-scan-form { display: grid; align-items: end; gap: 12px; padding: 18px 20px; }
+.sniffer-form { grid-template-columns: minmax(220px, 1.1fr) minmax(320px, 1.45fr) minmax(150px, .55fr) minmax(230px, .8fr); }
+.modbus-scan-form { grid-template-columns: minmax(220px, 1.15fr) minmax(260px, 1fr) minmax(150px, .55fr) minmax(140px, .5fr) minmax(230px, .8fr); }
+.sniffer-form .capture-button, .modbus-scan-form .capture-button { grid-column: auto; min-height: 44px; }
+.sniffer-safety { grid-column: 1 / -1; display: grid; gap: 8px; margin: 0; padding: 14px 16px; border: 1px solid var(--rule); background: rgba(255,255,255,.018); }
+.sniffer-safety legend { padding: 0 6px; color: var(--amber); font: 700 9px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.sniffer-safety label { display: grid; grid-template-columns: auto 1fr; gap: 9px; align-items: start; color: var(--ink); font-size: 11px; line-height: 1.45; }
+.sniffer-safety input { margin-top: 2px; }
+.sniffer-metrics, .modbus-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.recommendation-panel, .modbus-inventory-panel { margin-bottom: 18px; }
+.modbus-device-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.modbus-device-card { min-width: 0; min-height: 132px; padding: 20px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.modbus-device-card > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modbus-device-card strong { color: var(--live); font-family: var(--condensed); font-size: 25px; }
+.modbus-device-card span { color: var(--amber); font-size: 9px; letter-spacing: .08em; }
+.modbus-device-card p { margin: 16px 0 10px; color: var(--cream); font-size: 12px; overflow-wrap: anywhere; }
+.modbus-device-card small { color: var(--muted); font-size: 9px; line-height: 1.6; overflow-wrap: anywhere; }
 .can-evidence-layout { display: grid; }
 .can-battery-gauge { min-height: 245px; display: grid; grid-template-columns: minmax(220px, .32fr) minmax(300px, .44fr) minmax(300px, 1fr); align-items: stretch; border-bottom: 1px solid var(--rule); background: radial-gradient(circle at 43% 46%, rgba(255, 188, 66, .09), transparent 55%); }
 .can-battery-gauge .scope-gauge-label { align-items: flex-start; justify-content: center; flex-direction: column; border-right: 1px solid var(--rule); border-bottom: 0; }
@@ -213,6 +231,9 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .metric { min-height: 132px; padding: 18px; }
 .metric > span { display: block; min-height: 24px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
 .metric strong { display: inline-block; margin-top: 18px; color: var(--cream); font-family: var(--condensed); font-size: 40px; line-height: .8; font-variant-numeric: tabular-nums; }
+.metric { min-width: 0; }
+.metric strong { max-width: 100%; overflow-wrap: anywhere; }
+.sniffer-metrics, .modbus-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metric:nth-child(1) strong { color: var(--live); }
 .metric:nth-child(2) strong { color: var(--blue); }
 .metric small { margin-left: 7px; color: var(--muted); font-size: 9px; }
@@ -254,20 +275,22 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .run-card small, .run-card > span { color: var(--muted); font-size: 10px; }
 .run-card .sim { color: var(--amber); }
 .run-card .hardware { color: var(--live); }
-.run-card nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.run-card .artifact-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
 .run-card a { color: var(--cream); font-size: 10px; text-decoration: none; border-bottom: 1px solid var(--rule); }
 .empty-list { margin: 0; padding: 24px; color: var(--muted); font-size: 11px; }
 
 footer { display: flex; justify-content: space-between; gap: 18px; color: var(--muted); font-size: 9px; line-height: 1.5; text-transform: uppercase; letter-spacing: .08em; padding: 18px 2px 0; }
 
 @media (max-width: 1050px) {
-  .tab-bar { grid-template-columns: repeat(7, minmax(122px, 1fr)); }
+  .tab-bar { grid-template-columns: repeat(9, minmax(122px, 1fr)); }
   .tab-button { min-width: 122px; }
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .can-capture-form { grid-template-columns: 1fr 1fr; }
   .can-capture-form .capture-button { grid-column: 1 / -1; }
   .serial-capture-form { grid-template-columns: 1fr 1fr; }
   .serial-label, .serial-capture-form .capture-button { grid-column: 1 / -1; }
+  .sniffer-form, .modbus-scan-form { grid-template-columns: 1fr 1fr; }
+  .sniffer-form .capture-button, .modbus-scan-form .capture-button { grid-column: 1 / -1; }
   .overview-grid { grid-template-columns: 1fr 1fr; }
   .workflow-card { grid-column: 1 / -1; }
   .can-battery-gauge { grid-template-columns: minmax(200px, .42fr) minmax(280px, .58fr); }
@@ -294,14 +317,14 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .channel-configurator { grid-template-columns: 1fr; }
   .commissioned-body { grid-template-columns: 1fr; }
   .run-card { grid-template-columns: 1fr 1fr; }
-  .run-card nav { justify-content: flex-start; }
+  .run-card .artifact-links { justify-content: flex-start; }
 }
 
 @media (max-width: 620px) {
   .shell { width: min(100% - 22px, 1520px); padding-top: 24px; }
   .masthead { flex-direction: column; align-items: flex-start; }
   .status-stack { text-align: left; }
-  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(7, 112px); }
+  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(9, 112px); }
   .tab-button { min-width: 112px; font-size: 10px; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .panel-heading > div { width: 100%; }
@@ -317,8 +340,8 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .profile-button, .profile-button:nth-child(3) { border-right: 1px solid var(--rule); }
   .profile-button:nth-child(2n) { border-right: 0; }
   .profile-button:last-child { grid-column: 1 / -1; border-right: 0; }
-  .scope-capture-form, .can-capture-form, .serial-capture-form { grid-template-columns: 1fr; }
-  .scope-label-field, .capture-button, .can-capture-form .capture-button, .serial-label, .serial-capture-form .capture-button { grid-column: 1; }
+  .scope-capture-form, .can-capture-form, .serial-capture-form, .sniffer-form, .modbus-scan-form { grid-template-columns: 1fr; }
+  .scope-label-field, .capture-button, .can-capture-form .capture-button, .serial-label, .serial-capture-form .capture-button, .sniffer-form .capture-button, .modbus-scan-form .capture-button { grid-column: 1; }
   .serial-decode-grid { grid-template-columns: 1fr; }
   .serial-decode-grid article { border-right: 0; border-bottom: 1px solid var(--rule); }
   .serial-decode-grid article:last-child { border-bottom: 0; }
@@ -328,8 +351,11 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .channel-config.disabled .channel-title { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
   .scope-grid { min-height: 240px; }
   .commissioned-body { padding: 20px; }
-  .metric-grid { grid-template-columns: 1fr 1fr; }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sniffer-metrics, .modbus-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sniffer-metrics .metric strong { font-size: clamp(22px, 8vw, 34px); }
   .metric-grid .metric:last-child { grid-column: 1 / -1; }
+  .sniffer-metrics .metric:last-child, .modbus-metrics .metric:last-child { grid-column: auto; }
   .can-analysis-grid { grid-template-columns: 1fr; }
   .analysis-metric, .analysis-metric:nth-child(2n), .analysis-metric:nth-child(4n), .analysis-metric:nth-last-child(-n + 4), .analysis-metric:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
   .analysis-metric:last-child { border-bottom: 0; }

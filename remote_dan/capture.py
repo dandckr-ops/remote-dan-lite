@@ -416,11 +416,12 @@ class CaptureManager:
         data_dir: Path,
         backend: CaptureBackend,
         database: EvidenceDatabase | None = None,
+        lock: threading.Lock | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.backend = backend
         self.database = database
-        self._lock = threading.Lock()
+        self._lock = lock or threading.Lock()
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self, request: CaptureRequest) -> dict[str, object]:

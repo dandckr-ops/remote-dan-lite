@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from remote_dan.app import create_app
 from remote_dan.capture import SimulatorBackend
+from remote_dan.modbus_scan import ModbusSimulatorBackend
 
 
 class FakePicoBackend(SimulatorBackend):
@@ -191,3 +192,188 @@ def test_serial_hardware_capture_fails_closed_when_c662_is_absent(tmp_path: Path
 
     assert response.status_code == 503
     assert "not detected" in response.json()["detail"]
+
+
+def test_modbus_network_inventory_and_simulator_scan_are_exposed_without_write_fields(
+    tmp_path: Path,
+) -> None:
+    networks = (
+        {
+            "interface": "eth0",
+            "ifindex": 2,
+            "address": "192.168.50.10",
+            "network": "192.168.50.0/24",
+        },
+    )
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+        network_probe=lambda: networks,
+    )
+    client = TestClient(app)
+
+    inventory = client.get("/api/modbus/networks")
+    created = client.post("/api/modbus/scans", json={
+        "label": "connected plant network",
+        "interface": "eth0",
+        "subnet": "192.168.50.0/24",
+        "mode": "simulator",
+        "connect_timeout_ms": 300,
+        "workers": 4,
+    })
+
+    assert inventory.status_code == 200
+    assert inventory.json() == {
+        "networks": list(networks),
+        "policy": {
+            "ipv4_only": True,
+            "connected_subnets_only": True,
+            "max_hosts": 256,
+            "max_workers": 8,
+            "cooldown_seconds": 60,
+            "deadline_seconds": 30,
+            "writes_enabled": False,
+        },
+    }
+    assert created.status_code == 201
+    manifest = created.json()
+    assert manifest["capture_type"] == "modbus_scan"
+    assert manifest["backend"] == "modbus-simulator"
+    assert manifest["summary"]["device_count"] == 2
+    assert manifest["summary"]["writes_performed"] == 0
+    assert len(client.get(
+        f"/api/evidence/captures/{manifest['capture_id']}"
+    ).json()["artifacts"]) == 7
+
+
+def test_modbus_scan_rejects_scope_outside_connected_network(tmp_path: Path) -> None:
+    app = create_app(
+        data_dir=tmp_path,
+        network_probe=lambda: (
+            {
+                "interface": "eth0",
+                "ifindex": 2,
+                "address": "192.168.50.10",
+                "network": "192.168.50.0/24",
+            },
+        ),
+    )
+
+    response = TestClient(app).post("/api/modbus/scans", json={
+        "label": "unsafe scope",
+        "interface": "eth0",
+        "subnet": "10.0.0.0/24",
+        "mode": "simulator",
+    })
+
+    assert response.status_code == 422
+    assert "connected" in response.json()["detail"]
+
+
+def test_modbus_inventory_excludes_virtual_interfaces(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path,
+        network_probe=lambda: (
+            {
+                "interface": "docker0",
+                "address": "172.17.4.1",
+                "network": "172.17.0.0/16",
+            },
+        ),
+    )
+
+    response = TestClient(app).get("/api/modbus/networks")
+
+    assert response.status_code == 200
+    assert response.json()["networks"] == []
+
+
+def test_modbus_network_mode_uses_injected_read_only_backend(tmp_path: Path) -> None:
+    backend = ModbusSimulatorBackend()
+    backend.name = "modbus-network-test"
+    app = create_app(
+        data_dir=tmp_path,
+        network_probe=lambda: (
+            {
+                "interface": "eth0",
+                "ifindex": 2,
+                "address": "192.168.50.10",
+                "network": "192.168.50.0/24",
+            },
+        ),
+        modbus_backend=backend,
+    )
+
+    response = TestClient(app).post("/api/modbus/scans", json={
+        "label": "live network contract",
+        "interface": "eth0",
+        "subnet": "192.168.50.0/24",
+        "mode": "network",
+    })
+
+    assert response.status_code == 201
+    assert response.json()["backend"] == "modbus-network-test"
+
+
+def test_bus_sniffer_simulator_runs_three_window_survey_and_persists_lineage(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path / "captures",
+        db_path=tmp_path / "evidence.sqlite3",
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/bus-surveys", json={
+        "label": "unknown CAN survey",
+        "harness": "can-network",
+        "mode": "simulator",
+    })
+
+    assert response.status_code == 201
+    manifest = response.json()
+    assert manifest["capture_type"] == "bus_survey"
+    assert manifest["summary"]["classification"]["family"] == "CAN-family"
+    assert manifest["summary"]["classification"]["workspace"] == "can"
+    assert manifest["summary"]["writes_performed"] == 0
+    evidence = client.get(f"/api/evidence/captures/{manifest['capture_id']}")
+    assert evidence.status_code == 200
+    assert len(evidence.json()["artifacts"]) == 8
+
+
+def test_bus_sniffer_rejects_unverified_harness_at_schema_boundary(
+    tmp_path: Path,
+) -> None:
+    app = create_app(data_dir=tmp_path)
+
+    response = TestClient(app).post("/api/bus-surveys", json={
+        "label": "unsafe",
+        "harness": "unverified",
+        "mode": "simulator",
+    })
+
+    assert response.status_code == 422
+
+
+def test_bus_sniffer_hardware_mode_fails_closed_when_pico_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        data_dir=tmp_path,
+        hardware_probe=lambda: {
+            "driver_available": False,
+            "device_present": False,
+            "reason": "Pico unavailable for survey",
+        },
+    )
+
+    response = TestClient(app).post("/api/bus-surveys", json={
+        "label": "real survey",
+        "harness": "can-network",
+        "mode": "hardware",
+    })
+
+    assert response.status_code == 503
+    assert "unavailable" in response.json()["detail"]

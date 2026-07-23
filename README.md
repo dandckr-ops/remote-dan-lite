@@ -28,8 +28,9 @@ This repository deliberately separates proven behavior from source-complete and 
 | Artifact generation | **Proven** | Each run produces CSV, JSON, PNG, PDF, and a checksum manifest. |
 | SQLite evidence index | **Proven live** | The appliance preserves capture/artifact lineage locally while waveform and report files remain ordinary filesystem artifacts. |
 | Passive Serial receive lane | **In governed source; simulator proven** | RX-only capture, termios framing, raw/timing evidence, SQLite lineage, and conservative SEL ASCII, SEL Fast Message, Modbus RTU, DNP3, and IEC-101 fingerprints are tested. The C662 is discovered on the appliance, but the first real receive capture remains a commissioning gate. |
-| Session-centered tabs | **Proven live** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Guided-test acquisition remains an explicit commissioning boundary. |
-| Anybus AB7702 Modbus satellite | **Connected satellite** | The gateway is configured and reachable for Modbus TCP/RTU. Remote Dan API/UI integration is still pending. |
+| Passive Bus Sniffer | **In governed source; simulator proven** | Three bounded scope windows, fail-closed safety attestations, cross-window CAN/UART/analog evidence, and compatible-lane recommendations are tested. Real protected-input and Pico acceptance remain commissioning gates. |
+| Session-centered tabs | **Core proven live; expansion source-complete** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Bus Sniffer and Modbus are source-complete and simulator-proven but not claimed deployed until appliance acceptance. |
+| Anybus AB7702 Modbus satellite | **Connected satellite; integration simulator-proven** | The gateway is configured and reachable for Modbus TCP/RTU. Bounded interface-selected HICP plus Modbus 43/14 discovery, transaction evidence, and UI are implemented; the first real on-network discovery remains an explicit acceptance gate. |
 | OOB recovery node and field enclosure | **Architecture target** | These remain part of the three-plane appliance design, not a claim that the finished enclosure is commissioned. |
 
 ## Evidence produced today
@@ -45,6 +46,10 @@ A bounded Pico capture creates a timestamped evidence directory containing:
 Simulator data is always labeled `simulator`. Hardware mode fails closed when the native PS2000A driver or Pico USB device is unavailable.
 
 A Serial run produces `capture.bin`, timestamped `chunks.jsonl`, `transcript.txt`, `summary.json`, `overview.png`, `report.pdf`, and `manifest.json`. `capture.bin` preserves the original PARMRK stream; decoded bytes and error markers remain distinguishable in the timing sidecar.
+
+A Bus Sniffer run produces fast/context/sparse waveform CSVs, segment and acquisition provenance, classifier evidence, PNG/PDF review artifacts, and a checksum manifest. Hardware mode requires recorded low-voltage, common-reference, probe-rating, and passive-only attestations. Simulator graphics are visibly marked **SIMULATED EVIDENCE**.
+
+A Modbus discovery run produces `devices.csv`, `transactions.jsonl`, `scan.json`, PNG/PDF review artifacts, and a checksum manifest. Discovery is constrained to one selected connected RFC1918/link-local interface, at most 254 hosts, four workers by default, one HICP broadcast, and one Modbus 43/14 request per remaining candidate. There are no retries, register reads, or register writes.
 
 ## Architecture
 
@@ -73,13 +78,17 @@ See [`docs/architecture.md`](docs/architecture.md) for the full status vocabular
 
 The implemented primary navigation is:
 
-`Overview · Scope · Serial · CAN · Tests · Timeline · Evidence`
+`Overview · Bus Sniffer · Scope · Serial · CAN · Modbus · Tests · Timeline · Evidence`
 
 Connections and System remain secondary setup surfaces. Tabs configure or inspect one synchronized diagnostic session; they do not create separate acquisition implementations.
 
 **Scope** is the configurable physical-signal workspace. It provides General, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary starting profiles; 40 ms through 10 s windows; four channel enable/label controls; AC/DC coupling; model-proven input ranges; probe scaling; and bounded next-capture auto-range suggestions.
 
 **CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. Its analysis window samples the passive pair at approximately 10 MS/s and reports observed occupancy, nominal bitrate, CAN versus CAN FD header evidence, BRS data rate when resolvable, identifier width, frame activity, physical-layer measurements, and confidence-ranked protocol fingerprints. J1939, NMEA 2000, OBD-II/ISO-TP, and CANopen names require CRC-valid Classical CAN frames plus their identifier/PGN patterns; bitrate or voltage shape alone is never treated as proof. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
+
+**Bus Sniffer** is a passive electrical-classification gate, not an active discovery tool. It reconciles bounded fast, context, and sparse windows; requires repeatable framing before medium-confidence UART-family claims; fails closed on silence, clipping, periodic-clock lookalikes, and contradictory evidence; and only opens an existing workspace when its physical input lane is actually compatible. RS-485/422, RS-232, TTL, and 12 V single-wire candidates remain blocked until an appropriate receive-only interface is commissioned.
+
+**Modbus** performs manually initiated network identity discovery only. The operator selects a connected interface/subnet. HICP observations remain explicitly unauthenticated, foreign/conflicting addresses are retained without follow-up, and per-host outcomes preserve refused, timed-out, malformed, exception, and identity-confirmed results. The current tab does not expose arbitrary register reads or any write path.
 
 **Serial** is receive-only in the application. It opens the exact C662 `/dev/serial/by-id` identity with `O_RDONLY`, raw mode, exclusive tty ownership, no software/hardware flow control, and DTR/RTS deassertion where supported. That is not electrical isolation: CP210x TXD is still driven and DTR/RTS can pulse during open or USB lifecycle events. A genuinely passive field connection requires only RXD and a verified-safe reference; TXD, DTR, RTS, and other outputs must be physically disconnected and insulated. Baud/parity are reported as operator-configured unless independently inferred. USB read chunks are not treated as proof of Modbus RTU silent intervals.
 
@@ -112,13 +121,13 @@ SQLite stores metadata and relationships. Large evidence bytes remain ordinary f
 
 The Anybus gateway is an external LAN satellite for structured Modbus TCP-to-RTU transactions. It is not a replacement for raw serial evidence.
 
-Remote Dan integration should:
+Current discovery integration:
 
-- begin read-only
+- is read-only and manually initiated
 - route through the authenticated sidecar API
 - keep unauthenticated Modbus TCP/502 off public ingress
-- log target, function, address/range, result, timing, and error classification
-- require an explicit bounded unlock for future writes
+- logs target, exact identity request/response ADUs, timing, and outcome classification
+- omits writes entirely; any future write capability requires a separately governed bounded unlock
 - retain a direct isolated RS-485 or scope tap for levels, byte timing, CRC faults, collisions, and non-Modbus traffic
 
 ## Capture backends

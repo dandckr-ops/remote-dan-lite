@@ -282,10 +282,199 @@ function showLatestMetadata(run) {
   $("#latest-label").textContent = run.label || "—";
   $("#latest-profile").textContent = (run.profile || (isNetworkRun(run) ? "network" : "legacy")).toUpperCase();
   $("#latest-backend").textContent = (run.backend || "—").toUpperCase();
+  const countUnit = isSerialRun(run) ? "bytes" : (isModbusRun(run) ? "hosts" : "samples");
   $("#latest-window").textContent = run.preset
-    ? `${run.preset.toUpperCase()} · ${(run.samples || 0).toLocaleString()} samples`
+    ? `${run.preset.toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${countUnit}`
     : "—";
   $("#latest-time").textContent = formatTimestamp(run.captured_at);
+}
+
+function isBusSurveyRun(run) {
+  return run?.capture_type === "bus_survey" || run?.profile === "bus-sniffer";
+}
+
+function showBusSurvey(run) {
+  if (!run) return;
+  const classification = run.summary?.classification;
+  if (!classification) return;
+  $("#sniffer-topology").textContent = classification.electrical_topology || "—";
+  $("#sniffer-family").textContent = classification.family || "—";
+  $("#sniffer-rate").textContent = classification.candidate_bitrate_bps
+    ? formatBitrate(classification.candidate_bitrate_bps)
+    : "Unresolved";
+  $("#sniffer-confidence").textContent = (classification.confidence || "none").toUpperCase();
+  $("#sniffer-workspace").textContent = classification.workspace || "Bus Sniffer";
+  $("#sniffer-device").textContent = classification.input_device || "No recommendation";
+  $("#sniffer-reason").textContent = classification.reason || "No defensible classification.";
+  $("#sniffer-boundary").textContent = classification.boundary || "Remain passive.";
+  const status = $("#sniffer-status");
+  const classificationStatus = classification.status || "unresolved";
+  status.textContent = classificationStatus === "classified" ? "Classified" : classificationStatus.replaceAll("_", " ");
+  status.className = `status-label ${classificationStatus === "classified" ? "live" : "error"}`;
+  setImage($("#sniffer-overview"), $("#sniffer-empty-preview"), run);
+  const report = $("#sniffer-report");
+  report.href = artifactUrl(run, "report.pdf");
+  report.classList.remove("hidden");
+
+  const open = $("#sniffer-open-tab");
+  const target = classification.workspace;
+  const routable = ["medium", "high"].includes(classification.confidence)
+    && ["scope", "serial", "can", "modbus"].includes(target);
+  open.classList.toggle("hidden", !routable);
+  open.dataset.targetTab = routable ? target : "";
+  if (target === "serial" && classification.candidate_bitrate_bps) {
+    const option = [...$("#serial-baud").options].find(
+      (item) => Number(item.value) === Number(classification.candidate_bitrate_bps),
+    );
+    if (option) $("#serial-baud").value = option.value;
+  }
+}
+
+function bindBusSurveyForm() {
+  const harness = $("#sniffer-harness");
+  const mode = $("#sniffer-mode");
+  const button = $("#sniffer-button");
+  const safetyChecks = [
+    $("#sniffer-low-voltage"),
+    $("#sniffer-common-reference"),
+    $("#sniffer-probe-rating"),
+    $("#sniffer-passive-only"),
+  ];
+  const updateHarnessGate = () => {
+    const verified = harness.value !== "unverified";
+    const hardwareSafe = mode.value !== "hardware" || safetyChecks.every((item) => item.checked);
+    button.disabled = !verified || !hardwareSafe;
+    if (!verified) {
+      setMessage("#sniffer-message", "Select the exact commissioned or protected harness. Software cannot make an unknown ground connection safe.");
+    } else if (!hardwareSafe) {
+      setMessage("#sniffer-message", "Hardware capture is blocked until all four electrical-safety attestations are recorded.", "error");
+    } else {
+      setMessage("#sniffer-message", mode.value === "hardware" ? "Harness and safety attestations recorded. Survey remains receive-only." : "Simulator selected; no physical signal connection is used.");
+    }
+  };
+  harness.addEventListener("change", updateHarnessGate);
+  mode.addEventListener("change", updateHarnessGate);
+  safetyChecks.forEach((item) => item.addEventListener("change", updateHarnessGate));
+  $("#sniffer-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (harness.value === "unverified") {
+      updateHarnessGate();
+      return;
+    }
+    button.disabled = true;
+    setMessage("#sniffer-message", "Collecting fast, context, and sparse passive windows…");
+    try {
+      const run = await getJson("/api/bus-surveys", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          label: $("#sniffer-label").value,
+          harness: harness.value,
+          mode: mode.value,
+          low_voltage_confirmed: safetyChecks[0].checked,
+          common_reference_confirmed: safetyChecks[1].checked,
+          probe_rating_confirmed: safetyChecks[2].checked,
+          passive_only_confirmed: safetyChecks[3].checked,
+        }),
+      });
+      const classification = run.summary?.classification || {};
+      setMessage("#sniffer-message", `${run.run_id} completed. ${classification.family || "Bus unresolved"} · ${(classification.confidence || "none").toUpperCase()} confidence.`, "success");
+      await refreshRuns();
+    } catch (error) {
+      setMessage("#sniffer-message", `Bus survey failed: ${error.message}`, "error");
+    } finally {
+      updateHarnessGate();
+    }
+  });
+  $("#sniffer-open-tab").addEventListener("click", () => {
+    const target = $("#sniffer-open-tab").dataset.targetTab;
+    if (target) activateTab(target, {focus: true});
+  });
+  updateHarnessGate();
+}
+
+function isModbusRun(run) {
+  return run?.capture_type === "modbus_scan" || run?.profile === "modbus";
+}
+
+function showModbus(run) {
+  if (!run) return;
+  const summary = run.summary || {};
+  $("#modbus-device-count").textContent = Number(summary.device_count || 0).toLocaleString();
+  $("#modbus-confirmed-count").textContent = Number(summary.confirmed_modbus_count || 0).toLocaleString();
+  $("#modbus-anybus-count").textContent = Number(summary.anybus_count || 0).toLocaleString();
+  $("#modbus-write-count").textContent = Number(summary.writes_performed || 0).toLocaleString();
+  setImage($("#modbus-overview"), $("#modbus-empty-preview"), run);
+  const report = $("#modbus-report");
+  report.href = artifactUrl(run, "report.pdf");
+  report.classList.remove("hidden");
+
+  const devices = summary.devices || [];
+  const list = $("#modbus-device-list");
+  if (!devices.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No Modbus or Anybus identity was observed in this bounded scan.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...devices.map((device) => {
+    const card = document.createElement("article");
+    card.className = "modbus-device-card";
+    const heading = document.createElement("div");
+    const ip = document.createElement("strong");
+    const kind = document.createElement("span");
+    ip.textContent = device.ip || "unknown address";
+    kind.textContent = device.kind === "anybus_hicp" ? "ANYBUS / HICP" : "MODBUS TCP";
+    heading.append(ip, kind);
+    const identity = document.createElement("p");
+    identity.textContent = [
+      device.vendor_name,
+      device.product_code || device.fieldbus_type,
+      device.revision || device.module_version,
+    ].filter(Boolean).join(" · ") || "Identity unavailable";
+    const facts = document.createElement("small");
+    facts.textContent = [
+      device.mac,
+      device.port ? `TCP/${device.port}` : null,
+      device.unit_id !== undefined ? `Unit ${device.unit_id}` : null,
+      device.state,
+      `${device.confidence || "unknown"} confidence`,
+    ].filter(Boolean).join(" · ");
+    card.append(heading, identity, facts);
+    return card;
+  }));
+}
+
+async function loadModbusNetworks() {
+  const select = $("#modbus-subnet");
+  const button = $("#modbus-scan-button");
+  try {
+    const inventory = await getJson("/api/modbus/networks");
+    const networks = inventory.networks || [];
+    select.replaceChildren(...networks.map((item) => {
+      const option = document.createElement("option");
+      option.value = item.network;
+      option.dataset.interface = item.interface;
+      option.textContent = `${item.interface} · ${item.network} · local ${item.address}`;
+      return option;
+    }));
+    button.disabled = networks.length === 0;
+    if (!networks.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No connected private IPv4 network";
+      select.append(option);
+      setMessage("#modbus-message", "No connected IPv4 scan scope is available. Routed or arbitrary targets are not accepted.", "error");
+    }
+  } catch (error) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Network inventory unavailable";
+    select.replaceChildren(option);
+    button.disabled = true;
+    setMessage("#modbus-message", `Network inventory failed: ${error.message}`, "error");
+  }
 }
 
 function isSerialRun(run) {
@@ -454,7 +643,10 @@ function artifactLink(run, name, label) {
 function renderRuns(runs) {
   const list = $("#run-list");
   if (!runs.length) {
-    list.innerHTML = '<p class="empty-list">No evidence packages yet.</p>';
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No evidence packages yet.";
+    list.replaceChildren(empty);
     return;
   }
   list.replaceChildren(...runs.map((run) => {
@@ -470,10 +662,26 @@ function renderRuns(runs) {
     backend.className = (run.backend || "").includes("simulator") ? "sim" : "hardware";
     backend.textContent = (run.backend || "unknown").toUpperCase();
     const window = document.createElement("span");
-    window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${isSerialRun(run) ? "BYTES" : "SAMPLES"}`;
-    const links = document.createElement("nav");
-    links.setAttribute("aria-label", `Artifacts for ${run.label}`);
-    if (isSerialRun(run)) {
+    const sampleUnit = isSerialRun(run) ? "BYTES" : (isModbusRun(run) ? "HOSTS" : "SAMPLES");
+    window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${sampleUnit}`;
+    const links = document.createElement("div");
+    links.className = "artifact-links";
+    if (isBusSurveyRun(run)) {
+      links.append(
+        artifactLink(run, "fast.csv", "FAST"),
+        artifactLink(run, "context.csv", "CONTEXT"),
+        artifactLink(run, "sparse.csv", "SPARSE"),
+        artifactLink(run, "summary.json", "JSON"),
+        artifactLink(run, "report.pdf", "PDF"),
+      );
+    } else if (isModbusRun(run)) {
+      links.append(
+        artifactLink(run, "devices.csv", "INVENTORY"),
+        artifactLink(run, "scan.json", "SCAN"),
+        artifactLink(run, "summary.json", "JSON"),
+        artifactLink(run, "report.pdf", "PDF"),
+      );
+    } else if (isSerialRun(run)) {
       links.append(
         artifactLink(run, "capture.bin", "BIN"),
         artifactLink(run, "chunks.jsonl", "TIMING"),
@@ -497,7 +705,10 @@ function renderRuns(runs) {
 function renderTimeline(runs) {
   const list = $("#timeline-list");
   if (!runs.length) {
-    list.innerHTML = '<p class="empty-list">No capture events yet.</p>';
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No capture events yet.";
+    list.replaceChildren(empty);
     return;
   }
   list.replaceChildren(...runs.map((run, index) => {
@@ -525,6 +736,8 @@ async function refreshRuns() {
     renderRuns(runs);
     renderTimeline(runs);
     showLatestMetadata(runs[0]);
+    showBusSurvey(runs.find(isBusSurveyRun));
+    showModbus(runs.find(isModbusRun));
     showSerial(runs.find(isSerialRun));
     showNetwork(runs.find(isNetworkRun));
     showScope(runs.find(isScopeRun));
@@ -532,6 +745,8 @@ async function refreshRuns() {
     setMessage("#scope-message", `Could not load evidence list: ${error.message}`, "error");
     setMessage("#serial-message", `Could not load evidence list: ${error.message}`, "error");
     setMessage("#can-message", `Could not load evidence list: ${error.message}`, "error");
+    setMessage("#modbus-message", `Could not load evidence list: ${error.message}`, "error");
+    setMessage("#sniffer-message", `Could not load evidence list: ${error.message}`, "error");
   }
 }
 
@@ -627,13 +842,55 @@ function bindCanCaptureForm() {
   });
 }
 
+function bindModbusScanForm() {
+  $("#modbus-scan-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("#modbus-scan-button");
+    const networkSelect = $("#modbus-subnet");
+    const subnet = networkSelect.value;
+    const interfaceName = networkSelect.selectedOptions[0]?.dataset.interface;
+    if (!subnet || !interfaceName) {
+      setMessage("#modbus-message", "Choose a connected IPv4 subnet before scanning.", "error");
+      return;
+    }
+    button.disabled = true;
+    setMessage("#modbus-message", "Scanning the selected connected subnet with read-only identity requests…");
+    try {
+      const run = await getJson("/api/modbus/scans", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          label: $("#modbus-label").value,
+          interface: interfaceName,
+          subnet,
+          mode: $("#modbus-mode").value,
+          connect_timeout_ms: Number($("#modbus-timeout").value),
+          response_timeout_ms: 1250,
+          hicp_timeout_ms: 1500,
+          workers: 4,
+        }),
+      });
+      const count = Number(run.summary?.device_count || 0);
+      setMessage("#modbus-message", `${run.run_id} completed. ${count} identity candidate${count === 1 ? "" : "s"} retained with 0 writes.`, "success");
+      await refreshRuns();
+    } catch (error) {
+      setMessage("#modbus-message", `Modbus discovery failed: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 bindTabs();
 bindScopeControls();
 bindScopeCaptureForm();
+bindBusSurveyForm();
 bindSerialCaptureForm();
 bindCanCaptureForm();
+bindModbusScanForm();
 $("#refresh").addEventListener("click", refreshRuns);
 loadScopeProfiles();
+loadModbusNetworks();
 refreshStatus();
 refreshRuns();
 setInterval(refreshStatus, 15_000);

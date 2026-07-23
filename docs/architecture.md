@@ -18,9 +18,9 @@ At the current repository baseline:
 - Passive CAN analysis is **hardware-path proven** at a negotiated 0.104 µs sample interval over all three commissioned channels with no overflow.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
 - SQLite metadata and evidence lineage are **proven live**.
-- Seven session-centered tabs are **proven live** and share one evidence state. The Serial receive lane is **in governed source and simulator-proven**; its first real C662 capture and guided-test acquisition remain commissioning boundaries.
+- Seven core session-centered tabs are **proven live**. Bus Sniffer and Modbus expand the governed source to nine tabs and are **simulator-proven**; their first real protected-input/Pico and on-network discovery runs remain commissioning boundaries. The Serial receive lane is **in governed source and simulator-proven**; its first real C662 capture remains a commissioning boundary.
 - Profile-driven Scope acquisition is **hardware-preflight proven** on the real 2406B, including a 10-second capture and model-accepted ranges from ±20 mV through ±20 V.
-- The Anybus AB7702 is a **connected satellite**; Remote Dan integration is pending.
+- The Anybus AB7702 is a **connected satellite**. Bounded read-only HICP/43-14 discovery and durable transaction evidence are **in governed source and simulator-proven**; real network acceptance remains pending.
 - The complete three-device enclosure and independent recovery hardware remain an architecture target.
 
 ## Product doctrine
@@ -81,12 +81,14 @@ It should remain simpler than the capture node and should not depend on the capt
 The implemented primary tabs are:
 
 1. **Overview** — hardware readiness, synchronization, storage, capture state, and recent sessions
-2. **Scope** — profile-driven physical-signal acquisition with four configurable channels
-3. **Serial** — raw serial configuration, capture, and decode evidence
-4. **CAN** — listen-only acquisition, battery gauge, CAN-H/CAN-L evidence, passive signal intelligence, and confidence-ranked protocol fingerprints
-5. **Tests** — guided workflows that configure the shared acquisition engines
-6. **Timeline** — correlated scope, CAN, serial, test, and operator events
-7. **Evidence** — session packages, lineage, raw artifacts, calculations, reports, and operator findings
+2. **Bus Sniffer** — passive multi-window physical-layer classification and compatible-lane recommendation
+3. **Scope** — profile-driven physical-signal acquisition with four configurable channels
+4. **Serial** — raw serial configuration, capture, and decode evidence
+5. **CAN** — listen-only acquisition, battery gauge, CAN-H/CAN-L evidence, passive signal intelligence, and confidence-ranked protocol fingerprints
+6. **Modbus** — manually initiated, interface-scoped HICP and Modbus 43/14 identity discovery
+7. **Tests** — guided workflows that configure the shared acquisition engines
+8. **Timeline** — correlated scope, CAN, serial, test, and operator events
+9. **Evidence** — session packages, lineage, raw artifacts, calculations, reports, and operator findings
 
 Connections and System remain secondary setup areas.
 
@@ -223,7 +225,9 @@ operator browser
   → RS-485 Modbus RTU field device
 ```
 
-Initial integration must be read-only.
+Implemented discovery is read-only: one interface-selected HICP broadcast plus one Modbus 43/14 Read Device Identification request per remaining bounded host, with no retry, register read, or write fallback. HICP identity is retained as an unauthenticated observation rather than authentication. Foreign/conflicting addresses are not followed.
+
+Future structured register transactions remain a separate integration slice and must begin read-only.
 
 Every request should record:
 
@@ -278,10 +282,10 @@ Do not infer that a feature is live because it appears in Git. Conversely, runti
 
 ## Current next slices
 
-1. Reconcile and deploy the database-backed tabbed source revision to the appliance.
-2. Add asset/case/session API surfaces and selectors.
-3. Commission the raw Serial acquisition lane.
-4. Integrate the Anybus satellite read-only with durable transaction logging.
-5. Add richer cross-source timeline correlation.
-6. Commission guided test workflows without duplicating acquisition engines.
-7. Commission independent recovery hardware and the final enclosure.
+1. Deploy and accept the nine-tab source revision on the appliance.
+2. Commission the raw Serial acquisition lane with the C662.
+3. Run the first governed on-network Anybus/HICP/43-14 discovery and verify gateway service continuity.
+4. Commission protected Bus Sniffer inputs and the first real Pico survey without adding termination or drive.
+5. Add asset/case/session API surfaces and selectors.
+6. Add richer cross-source timeline correlation.
+7. Commission guided test workflows and independent recovery hardware without duplicating acquisition engines.

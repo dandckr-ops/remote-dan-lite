@@ -6,7 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 STATIC_DIR = ROOT / "remote_dan" / "static"
-EXPECTED_TABS = ["overview", "scope", "serial", "can", "tests", "timeline", "evidence"]
+EXPECTED_TABS = [
+    "overview", "bus-sniffer", "scope", "serial", "can", "modbus",
+    "tests", "timeline", "evidence",
+]
 
 
 class ConsoleParser(HTMLParser):
@@ -47,16 +50,15 @@ def parse_console() -> ConsoleParser:
     return parser
 
 
-def test_console_declares_seven_accessible_primary_tabs_without_modbus() -> None:
+def test_console_declares_nine_accessible_primary_tabs() -> None:
     parser = parse_console()
 
     assert [tab["data-tab"] for tab in parser.tabs] == EXPECTED_TABS
     assert all(
-        tab["text"].lower().endswith(name)
+        tab["text"].lower().endswith(name.replace("-", " "))
         for tab, name in zip(parser.tabs, EXPECTED_TABS, strict=True)
     )
     assert [panel["data-panel"] for panel in parser.panels] == EXPECTED_TABS
-    assert "modbus" not in {tab["data-tab"] for tab in parser.tabs}
 
     for index, name in enumerate(EXPECTED_TABS):
         tab = parser.tabs[index]
@@ -83,6 +85,24 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
         "scope-primary-value",
         "scope-primary-detail",
         "scope-overview",
+        "sniffer-form",
+        "sniffer-harness",
+        "sniffer-button",
+        "sniffer-low-voltage",
+        "sniffer-common-reference",
+        "sniffer-probe-rating",
+        "sniffer-passive-only",
+        "sniffer-status",
+        "sniffer-topology",
+        "sniffer-family",
+        "sniffer-rate",
+        "sniffer-confidence",
+        "sniffer-workspace",
+        "sniffer-device",
+        "sniffer-reason",
+        "sniffer-boundary",
+        "sniffer-open-tab",
+        "sniffer-overview",
         "serial-capture-form",
         "serial-capture-button",
         "serial-message",
@@ -121,15 +141,28 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
         "can-frame-count",
         "can-analysis-confidence",
         "can-analysis-detail",
+        "modbus-scan-form",
+        "modbus-subnet",
+        "modbus-mode",
+        "modbus-scan-button",
+        "modbus-message",
+        "modbus-device-count",
+        "modbus-confirmed-count",
+        "modbus-anybus-count",
+        "modbus-write-count",
+        "modbus-device-list",
+        "modbus-overview",
         "timeline-list",
         "run-list",
     }
     assert required_ids <= parser.ids
 
     index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    overview_markup = index.split('id="panel-overview"', 1)[1].split('id="panel-scope"', 1)[0]
-    can_markup = index.split('id="panel-can"', 1)[1].split('id="panel-tests"', 1)[0]
+    overview_markup = index.split('id="panel-overview"', 1)[1].split('id="panel-bus-sniffer"', 1)[0]
+    can_markup = index.split('id="panel-can"', 1)[1].split('id="panel-modbus"', 1)[0]
     serial_markup = index.split('id="panel-serial"', 1)[1].split('id="panel-can"', 1)[0]
+    sniffer_markup = index.split('id="panel-bus-sniffer"', 1)[1].split('id="panel-scope"', 1)[0]
+    modbus_markup = index.split('id="panel-modbus"', 1)[1].split('id="panel-tests"', 1)[0]
     assert "data-vbat-value" not in overview_markup
     assert "data-vbat-detail" not in overview_markup
     assert "Battery voltage" not in overview_markup
@@ -147,6 +180,11 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
     assert "Protocol fingerprint" in serial_markup
     assert "transmit" not in serial_markup.lower()
     assert serial_markup.index('id="serial-overview"') < serial_markup.index('id="serial-analysis-status"')
+    assert "unverified — blocked" in sniffer_markup
+    assert "Software cannot make an unknown ground connection safe" in sniffer_markup
+    assert "no register writes" in modbus_markup
+    assert "Writes performed" in modbus_markup
+    assert "Not implemented" in modbus_markup
     assert index.count("data-vbat-value") == 1
     assert index.count("data-vbat-detail") == 1
     assert index.count("data-scope-profile=") == 5
@@ -169,6 +207,7 @@ def test_console_exposes_shared_capture_views_and_digital_battery_readout() -> N
 def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() -> None:
     script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
+    assert "innerHTML" not in script
     assert "function activateTab" in script
     assert 'setAttribute("aria-selected"' in script
     assert ".hidden =" in script
@@ -187,6 +226,15 @@ def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() ->
     assert "function bindScopeCaptureForm" in script
     assert "function bindCanCaptureForm" in script
     assert "function bindSerialCaptureForm" in script
+    assert "function bindBusSurveyForm" in script
+    assert "function showBusSurvey" in script
+    assert 'getJson("/api/bus-surveys"' in script
+    assert "targetTab" in script
+    assert "function bindModbusScanForm" in script
+    assert "function loadModbusNetworks" in script
+    assert "function showModbus" in script
+    assert 'getJson("/api/modbus/networks")' in script
+    assert 'getJson("/api/modbus/scans"' in script
     assert "function showSerial" in script
     assert "function showCanAnalysis" in script
     assert "function formatBitrate" in script
