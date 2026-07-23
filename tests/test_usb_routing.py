@@ -38,6 +38,15 @@ def test_plan_rejects_forwarding_a_protected_local_capture_device() -> None:
         plan_virtualhere_allowlist([pico], {pico["key"]: "virtualhere"})
 
 
+def test_plan_allows_explicit_sel_c662_forwarding() -> None:
+    sel = device("usb:1adb:0001:c662:3-2", "1adb", "0001")
+
+    plan = plan_virtualhere_allowlist([sel], {sel["key"]: "virtualhere"})
+
+    assert plan.allowed_devices == ("1adb/0001",)
+    assert plan.routes == {sel["key"]: "virtualhere"}
+
+
 def test_plan_rejects_ambiguous_duplicate_vid_pid_selection() -> None:
     first = device("usb:084f:c050:-:3-1", "084f", "c050")
     second = device("usb:084f:c050:-:3-2", "084f", "c050")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-PROTECTED_LOCAL_DEVICE_IDS = frozenset({"0ce9/1016", "1adb/0001"})
+PROTECTED_LOCAL_DEVICE_IDS = frozenset({"0ce9/1016"})
 VALID_ROUTES = frozenset({"local", "virtualhere"})
 
 
