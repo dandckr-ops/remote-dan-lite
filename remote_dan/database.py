@@ -302,6 +302,79 @@ class EvidenceDatabase:
             )
             return int(cursor.lastrowid)
 
+    def complete_capture_with_artifacts(
+        self,
+        capture_id: int,
+        artifacts: list[dict[str, Any]],
+    ) -> None:
+        """Register the complete artifact set and publish the capture atomically."""
+        with self._connect() as connection:
+            capture = connection.execute(
+                "SELECT status FROM captures WHERE id = ?",
+                (capture_id,),
+            ).fetchone()
+            if capture is None:
+                raise ValueError("capture does not exist")
+            if capture["status"] != "pending":
+                raise ValueError("capture is not pending")
+            for artifact in artifacts:
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        capture_id, created_at, kind, filename, relative_path,
+                        media_type, size_bytes, sha256
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        capture_id,
+                        _utc_now(),
+                        artifact["kind"],
+                        artifact["filename"],
+                        artifact["relative_path"],
+                        artifact["media_type"],
+                        artifact["size_bytes"],
+                        artifact["sha256"],
+                    ),
+                )
+            cursor = connection.execute(
+                "UPDATE captures SET status = 'complete' WHERE id = ? AND status = 'pending'",
+                (capture_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("capture completion state changed")
+
+    def list_complete_captures(
+        self,
+        *,
+        capture_types: tuple[str, ...] | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        if limit < 1:
+            return []
+        parameters: list[Any] = []
+        type_clause = ""
+        if capture_types:
+            placeholders = ", ".join("?" for _ in capture_types)
+            type_clause = f" AND capture_type IN ({placeholders})"
+            parameters.extend(capture_types)
+        parameters.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id
+                FROM captures
+                WHERE status = 'complete'{type_clause}
+                ORDER BY captured_at DESC, id DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return [
+            record
+            for row in rows
+            if (record := self.get_capture(int(row["id"]))) is not None
+        ]
+
     def set_capture_status(self, capture_id: int, status: str) -> None:
         with self._connect() as connection:
             cursor = connection.execute(

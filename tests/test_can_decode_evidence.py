@@ -99,6 +99,7 @@ def _source_capture(
         sample_interval_us=sample_interval_us,
         duration_ms=float(time_us[-1] / 1000.0),
         status="complete",
+        metadata={"profile": "network"},
     )
     manifest = {
         "run_id": run_id,
@@ -134,6 +135,35 @@ def _source_capture(
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _refresh_artifact_record(
+    database: EvidenceDatabase,
+    capture_id: int,
+    run_dir: Path,
+    filename: str,
+) -> None:
+    path = run_dir / filename
+    with database._connect() as connection:
+        connection.execute(
+            """
+            UPDATE artifacts
+            SET relative_path = ?, size_bytes = ?, sha256 = ?
+            WHERE capture_id = ? AND filename = ?
+            """,
+            (
+                f"{run_dir.name}/{filename}",
+                path.stat().st_size,
+                _sha256(path),
+                capture_id,
+                "capture.csv" if filename == "fast.csv" else filename,
+            ),
+        )
+        if filename == "fast.csv":
+            connection.execute(
+                "UPDATE artifacts SET filename = 'fast.csv' WHERE capture_id = ? AND filename = 'capture.csv'",
+                (capture_id,),
+            )
 
 
 def test_child_decode_preserves_source_and_registers_hashed_lineage(tmp_path: Path) -> None:
@@ -192,7 +222,7 @@ def test_bus_survey_can_candidate_uses_fast_waveform(tmp_path: Path) -> None:
     root = tmp_path / "captures"
     database = EvidenceDatabase(tmp_path / "evidence.sqlite3")
     database.initialize()
-    source_dir, _ = _source_capture(root, database, run_id="survey-can-001")
+    source_dir, capture_id = _source_capture(root, database, run_id="survey-can-001")
     (source_dir / "capture.csv").rename(source_dir / "fast.csv")
     manifest = json.loads((source_dir / "manifest.json").read_text())
     manifest["capture_type"] = "bus_survey"
@@ -205,6 +235,13 @@ def test_bus_survey_can_candidate_uses_fast_waveform(tmp_path: Path) -> None:
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    with database._connect() as connection:
+        connection.execute(
+            "UPDATE captures SET capture_type = 'bus_survey', metadata_json = ? WHERE id = ?",
+            (json.dumps({"profile": "bus-sniffer"}), capture_id),
+        )
+    _refresh_artifact_record(database, capture_id, source_dir, "fast.csv")
+    _refresh_artifact_record(database, capture_id, source_dir, "manifest.json")
 
     decoded = CanDecodeManager(root, database=database).run(
         CanDecodeRequest(source_run_id="survey-can-001", label="Survey decode")
@@ -264,6 +301,10 @@ def test_source_validation_fails_closed_for_unsafe_or_ineligible_inputs(tmp_path
     malformed_manifest = json.loads((malformed_dir / "manifest.json").read_text())
     malformed_manifest["sha256"]["capture.csv"] = _sha256(malformed_dir / "capture.csv")
     (malformed_dir / "manifest.json").write_text(json.dumps(malformed_manifest))
+    malformed_record = database.get_capture_by_run_id("malformed")
+    assert malformed_record is not None
+    _refresh_artifact_record(database, int(malformed_record["id"]), malformed_dir, "capture.csv")
+    _refresh_artifact_record(database, int(malformed_record["id"]), malformed_dir, "manifest.json")
     with pytest.raises(ValueError, match="malformed"):
         manager.run(CanDecodeRequest(source_run_id="malformed", label="malformed"))
 
@@ -317,6 +358,9 @@ def test_source_hash_and_sqlite_run_id_are_authoritative(tmp_path: Path) -> None
     manifest = json.loads(manifest_path.read_text())
     manifest["capture_id"] = source_capture_id + 999
     manifest_path.write_text(json.dumps(manifest))
+    _refresh_artifact_record(
+        database, source_capture_id, source_dir, "manifest.json"
+    )
 
     child = CanDecodeManager(root, database=database).run(
         CanDecodeRequest(source_run_id="source-can-001", label="authoritative lineage")
@@ -326,13 +370,80 @@ def test_source_hash_and_sqlite_run_id_are_authoritative(tmp_path: Path) -> None
     source_dir2, _ = _source_capture(root, database, run_id="tampered-source")
     with (source_dir2 / "capture.csv").open("a", encoding="utf-8") as handle:
         handle.write("999,13.8,2.5,2.5\n")
-    with pytest.raises(ValueError, match="hash"):
+    with pytest.raises(ValueError, match="size|hash"):
         CanDecodeManager(root, database=database).run(
             CanDecodeRequest(source_run_id="tampered-source", label="reject tamper")
         )
 
 
-@pytest.mark.parametrize("failure_stage", ["after_row", "first_artifact", "publication"])
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("orphan", "SQLite"),
+        ("pending", "complete"),
+        ("type", "type"),
+        ("profile", "profile"),
+        ("missing_artifact", "artifact"),
+        ("path", "path"),
+        ("size", "size"),
+        ("hash", "hash"),
+    ],
+)
+def test_decode_requires_authoritative_complete_sqlite_parent(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    root = tmp_path / "captures"
+    database = EvidenceDatabase(tmp_path / "evidence.sqlite3")
+    database.initialize()
+    source_dir, capture_id = _source_capture(root, database)
+    if mutation == "orphan":
+        database.delete_capture(capture_id)
+    elif mutation == "pending":
+        database.set_capture_status(capture_id, "pending")
+    elif mutation == "type":
+        with database._connect() as connection:
+            connection.execute("UPDATE captures SET capture_type = 'serial' WHERE id = ?", (capture_id,))
+    elif mutation == "profile":
+        database.set_capture_metadata(capture_id, {"profile": "general"})
+    else:
+        with database._connect() as connection:
+            artifact = connection.execute(
+                "SELECT id FROM artifacts WHERE capture_id = ? AND filename = 'capture.csv'",
+                (capture_id,),
+            ).fetchone()
+            assert artifact is not None
+            if mutation == "missing_artifact":
+                connection.execute("DELETE FROM artifacts WHERE id = ?", (artifact["id"],))
+            elif mutation == "path":
+                connection.execute(
+                    "UPDATE artifacts SET relative_path = 'other/capture.csv' WHERE id = ?",
+                    (artifact["id"],),
+                )
+            elif mutation == "size":
+                connection.execute(
+                    "UPDATE artifacts SET size_bytes = size_bytes + 1 WHERE id = ?",
+                    (artifact["id"],),
+                )
+            else:
+                connection.execute(
+                    "UPDATE artifacts SET sha256 = ? WHERE id = ?",
+                    ("0" * 64, artifact["id"]),
+                )
+
+    with pytest.raises(ValueError, match=message):
+        CanDecodeManager(root, database=database).run(
+            CanDecodeRequest(source_run_id="source-can-001", label="reject")
+        )
+
+    assert [path.name for path in root.iterdir()] == [source_dir.name]
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["after_row", "artifact_registration", "publication", "after_completion"],
+)
 def test_failure_injection_removes_child_rows_and_partial_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -350,11 +461,13 @@ def test_failure_injection_removes_child_rows_and_partial_evidence(
         monkeypatch.setattr(manager, "_write_frames", lambda *_args: (_ for _ in ()).throw(
             RuntimeError("injected after child row")
         ))
-    elif failure_stage == "first_artifact":
-        monkeypatch.setattr(database, "add_artifact", lambda **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("injected artifact registration")
-        ))
-    else:
+    elif failure_stage == "artifact_registration":
+        monkeypatch.setattr(
+            database,
+            "complete_capture_with_artifacts",
+            lambda *_args: (_ for _ in ()).throw(RuntimeError("injected artifact registration")),
+        )
+    elif failure_stage == "publication":
         original_rename = Path.rename
 
         def fail_publication(path: Path, target: Path) -> Path:
@@ -363,6 +476,14 @@ def test_failure_injection_removes_child_rows_and_partial_evidence(
             return original_rename(path, target)
 
         monkeypatch.setattr(Path, "rename", fail_publication)
+    else:
+        original_complete = database.complete_capture_with_artifacts
+
+        def fail_after_completion(*args: object) -> None:
+            original_complete(*args)
+            raise RuntimeError("injected after completion")
+
+        monkeypatch.setattr(database, "complete_capture_with_artifacts", fail_after_completion)
 
     with pytest.raises(RuntimeError, match="injected"):
         manager.run(CanDecodeRequest(source_run_id="source-can-001", label="failure proof"))

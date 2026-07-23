@@ -376,7 +376,7 @@ class BusSurveyManager:
                         segment.sample_interval_us for segment in data.segments
                     ),
                     duration_ms=total_duration_ms,
-                    metadata={"summary": summary},
+                    metadata={"profile": "bus-sniffer", "summary": summary},
                 )
             manifest: dict[str, object] = {
                 "run_id": run_id,

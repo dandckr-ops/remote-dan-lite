@@ -59,7 +59,7 @@ def _destuff(raw_bits: list[int], *, max_output_bits: int) -> tuple[list[int], b
     output: list[int] = []
     previous: int | None = None
     run = 0
-    for bit in raw_bits:
+    for index, bit in enumerate(raw_bits):
         if previous is not None and run == 5:
             if bit == previous:
                 return output, False
@@ -67,13 +67,16 @@ def _destuff(raw_bits: list[int], *, max_output_bits: int) -> tuple[list[int], b
             run = 1
             continue
         output.append(bit)
-        if len(output) >= max_output_bits:
-            return output, True
         if bit == previous:
             run += 1
         else:
             previous = bit
             run = 1
+        if len(output) >= max_output_bits:
+            if run == 5:
+                if index + 1 >= len(raw_bits) or raw_bits[index + 1] == bit:
+                    return output, False
+            return output, True
     return output, True
 
 
@@ -99,6 +102,10 @@ def _destuff_with_consumed(
             previous = bit
             run = 1
         if len(output) >= max_output_bits:
+            if run == 5:
+                if index + 1 >= len(raw_bits) or raw_bits[index + 1] == bit:
+                    return output, False, min(index + 2, len(raw_bits))
+                return output, True, index + 2
             return output, True, index + 1
     return output, True, len(raw_bits)
 
@@ -184,6 +191,8 @@ def _parse_classic_frame(raw_bits: list[int]) -> dict[str, Any] | None:
         remote_index = 12
     prefix, valid = _destuff(raw_bits, max_output_bits=prefix_length)
     if not valid or len(prefix) < prefix_length:
+        return None
+    if header["extended"] and prefix[33] != 0:
         return None
     remote = bool(prefix[remote_index])
     dlc = _integer(prefix[dlc_slice])
@@ -527,20 +536,32 @@ def decode_can_waveform(
         raise ValueError("CAN decode timestamps must increase strictly")
 
     expected = _decode_can_orientation(time_us, can_h, can_l)
-    if expected["frames"]:
-        expected["polarity"] = "expected"
-        expected["warnings"] = []
-        return expected
     reversed_result = _decode_can_orientation(time_us, can_l, can_h)
-    if reversed_result["frames"]:
-        reversed_result["polarity"] = "reversed"
-        reversed_result["warnings"] = [
+    orientations = (("expected", expected), ("reversed", reversed_result))
+
+    def evidence_key(item: tuple[str, dict[str, Any]]) -> tuple[int, float, int, int]:
+        polarity, result = item
+        frame_count = len(result["frames"])
+        rejected_count = int(result["rejected_candidate_count"])
+        candidate_count = frame_count + rejected_count
+        rejected_ratio = rejected_count / candidate_count if candidate_count else 0.0
+        return (
+            frame_count,
+            -rejected_ratio,
+            -rejected_count,
+            int(polarity == "expected"),
+        )
+
+    polarity, selected = max(orientations, key=evidence_key)
+    selected["polarity"] = polarity
+    selected["warnings"] = (
+        [
             "CAN polarity is reversed relative to the recorded CAN-H/CAN-L source labels."
         ]
-        return reversed_result
-    expected["polarity"] = "expected"
-    expected["warnings"] = []
-    return expected
+        if polarity == "reversed"
+        else []
+    )
+    return selected
 
 
 def _analyze_can_orientation(

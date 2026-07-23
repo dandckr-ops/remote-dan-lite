@@ -26,6 +26,7 @@ from remote_dan.can_decode import (
     CanDecodeRequest,
     CanDecodeSourceNotFound,
     eligible_bus_survey_classification,
+    validated_artifact_path,
 )
 from remote_dan.capture import (
     ATTENUATIONS,
@@ -199,10 +200,26 @@ def _list_manifests(data_dir: Path) -> list[dict[str, object]]:
     return manifests
 
 
-def _list_can_decode_sources(data_dir: Path) -> list[dict[str, object]]:
+def _list_can_decode_sources(
+    data_dir: Path,
+    database: EvidenceDatabase,
+) -> list[dict[str, object]]:
     sources: list[dict[str, object]] = []
-    for manifest in _list_manifests(data_dir):
+    for record in database.list_complete_captures(
+        capture_types=("can", "scope", "bus_survey"),
+        limit=200,
+    ):
+        try:
+            manifest_path = validated_artifact_path(data_dir, record, "manifest.json")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
+            continue
         capture_type = manifest.get("capture_type")
+        if capture_type != record.get("capture_type"):
+            continue
+        profile = manifest.get("profile")
+        if record.get("metadata", {}).get("profile") != profile:
+            continue
         summary = manifest.get("summary") if isinstance(manifest.get("summary"), dict) else {}
         classification = summary.get("classification") if isinstance(summary, dict) else {}
         is_survey_can = (
@@ -215,15 +232,24 @@ def _list_can_decode_sources(data_dir: Path) -> list[dict[str, object]]:
         if not (is_survey_can or is_network):
             continue
         run_id = manifest.get("run_id")
-        if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id):
+        if (
+            not isinstance(run_id, str)
+            or run_id != record.get("run_id")
+            or not RUN_ID_PATTERN.fullmatch(run_id)
+        ):
+            continue
+        source_artifact = "fast.csv" if is_survey_can else "capture.csv"
+        try:
+            validated_artifact_path(data_dir, record, source_artifact)
+        except ValueError:
             continue
         sources.append({
             "run_id": run_id,
-            "capture_id": manifest.get("capture_id"),
-            "captured_at": manifest.get("captured_at"),
-            "label": manifest.get("label"),
+            "capture_id": record["id"],
+            "captured_at": record["captured_at"],
+            "label": record["label"],
             "capture_type": capture_type,
-            "source_artifact": "fast.csv" if is_survey_can else "capture.csv",
+            "source_artifact": source_artifact,
         })
         if len(sources) == 200:
             break
@@ -354,7 +380,7 @@ def create_app(
 
     @app.get("/api/can-decode-sources")
     def can_decode_sources() -> dict[str, object]:
-        sources = _list_can_decode_sources(capture_dir)
+        sources = _list_can_decode_sources(capture_dir, database)
         return {
             "sources": sources,
             "returned_count": len(sources),
@@ -390,24 +416,34 @@ def create_app(
         ):
             raise HTTPException(status_code=422, detail="invalid CAN identifier filter")
         identifier_filter = identifier_filter.removeprefix("0x")
-        run_dir = capture_dir / run_id
-        manifest_path = run_dir / "manifest.json"
-        summary_path = run_dir / "summary.json"
-        frames_path = run_dir / "frames.jsonl"
+        record = database.get_capture_by_run_id(run_id)
         try:
             if (
-                run_dir.is_symlink()
-                or manifest_path.is_symlink()
-                or summary_path.is_symlink()
-                or frames_path.is_symlink()
-                or run_dir.resolve().parent != capture_dir.resolve()
+                record is None
+                or record.get("status") != "complete"
+                or record.get("capture_type") != "can_decode"
             ):
-                raise OSError("unconfined run")
+                raise ValueError("not an authoritative CAN decode")
+            required = {
+                filename: validated_artifact_path(capture_dir, record, filename)
+                for filename in (
+                    "frames.jsonl",
+                    "identifiers.csv",
+                    "summary.json",
+                    "manifest.json",
+                )
+            }
+            manifest_path = required["manifest.json"]
+            summary_path = required["summary.json"]
+            frames_path = required["frames.jsonl"]
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            if manifest.get("capture_type") != "can_decode":
+            if (
+                manifest.get("capture_type") != "can_decode"
+                or manifest.get("run_id") != run_id
+            ):
                 raise OSError("not a CAN decode")
-        except (OSError, UnicodeError, json.JSONDecodeError):
+        except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         all_identifiers = summary.get("identifiers", [])
         if not isinstance(all_identifiers, list):
@@ -449,7 +485,7 @@ def create_app(
         total_identifiers = len(filtered_identifiers)
         return {
             "run_id": run_id,
-            "capture_id": manifest.get("capture_id"),
+            "capture_id": record["id"],
             "source_run_id": manifest.get("source_run_id"),
             "can_polarity": manifest.get("can_polarity"),
             "nominal_bitrate_bps": manifest.get("nominal_bitrate_bps"),

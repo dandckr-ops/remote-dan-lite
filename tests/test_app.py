@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import json
+import shutil
 
 from fastapi.testclient import TestClient
 
@@ -509,6 +511,42 @@ def test_can_decode_api_lists_sources_creates_child_and_returns_bounded_rows(
         "frames_jsonl": f"/artifacts/{child['run_id']}/frames.jsonl",
         "identifiers_csv": f"/artifacts/{child['run_id']}/identifiers.csv",
     }
+    with (tmp_path / "captures" / child["run_id"] / "frames.jsonl").open("a") as handle:
+        handle.write("{}\n")
+    assert client.get(f"/api/can-decodes/{child['run_id']}").status_code == 404
+
+
+def test_can_decode_source_listing_requires_complete_matching_sqlite_rows(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "authoritative source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    source_id = int(source["capture_id"])
+    orphan_dir = capture_root / "orphan-source"
+    shutil.copytree(capture_root / source["run_id"], orphan_dir)
+    orphan_manifest = json.loads((orphan_dir / "manifest.json").read_text())
+    orphan_manifest["run_id"] = "orphan-source"
+    (orphan_dir / "manifest.json").write_text(json.dumps(orphan_manifest))
+
+    assert [item["run_id"] for item in client.get("/api/can-decode-sources").json()["sources"]] == [
+        source["run_id"]
+    ]
+    app.state.database.set_capture_status(source_id, "pending")
+    assert client.get("/api/can-decode-sources").json()["sources"] == []
+    with app.state.database._connect() as connection:
+        connection.execute(
+            "UPDATE captures SET status = 'complete', capture_type = 'serial' WHERE id = ?",
+            (source_id,),
+        )
+    assert client.get("/api/can-decode-sources").json()["sources"] == []
 
 
 def test_can_decode_api_maps_malformed_missing_and_busy_requests(tmp_path: Path) -> None:
@@ -599,10 +637,33 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         "frame_count": len(frames),
         "identifier_count": len(identifiers),
     }))
-    client = TestClient(create_app(
+    app = create_app(
         data_dir=capture_root,
         db_path=tmp_path / "evidence.sqlite3",
-    ))
+    )
+    capture_id = app.state.database.create_capture(
+        run_id=run_id,
+        captured_at="2026-07-23T12:00:00+00:00",
+        capture_type="can_decode",
+        label="synthetic child",
+        backend="test",
+    )
+    registrations = []
+    for filename in ("frames.jsonl", "identifiers.csv", "summary.json", "manifest.json"):
+        path = run_dir / filename
+        if not path.exists():
+            path.write_text("", encoding="utf-8")
+        registrations.append({
+            "kind": "can_decode",
+            "filename": filename,
+            "relative_path": f"{run_id}/{filename}",
+            "media_type": "application/json",
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    client = TestClient(app)
+    assert client.get(f"/api/can-decodes/{run_id}").status_code == 404
+    app.state.database.complete_capture_with_artifacts(capture_id, registrations)
 
     unfiltered = client.get(f"/api/can-decodes/{run_id}").json()
     filtered = client.get(f"/api/can-decodes/{run_id}?identifier=0x321").json()

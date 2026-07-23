@@ -4,7 +4,9 @@ import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
+import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -45,6 +47,44 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _artifact_by_filename(
+    record: dict[str, Any],
+    filename: str,
+) -> dict[str, Any] | None:
+    matches = [
+        artifact for artifact in record.get("artifacts", [])
+        if artifact.get("filename") == filename
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def validated_artifact_path(
+    data_dir: Path,
+    record: dict[str, Any],
+    filename: str,
+) -> Path:
+    artifact = _artifact_by_filename(record, filename)
+    if artifact is None:
+        raise ValueError(f"authoritative SQLite artifact {filename} is missing")
+    expected_relative = f"{record['run_id']}/{filename}"
+    if artifact.get("relative_path") != expected_relative:
+        raise ValueError(f"authoritative artifact path mismatch for {filename}")
+    run_dir = data_dir / str(record["run_id"])
+    path = run_dir / filename
+    if run_dir.is_symlink() or path.is_symlink():
+        raise ValueError("artifact symlinks are not allowed")
+    try:
+        confined = _confined(path, run_dir)
+        stat = confined.stat()
+    except (FileNotFoundError, OSError) as exc:
+        raise ValueError(f"authoritative artifact {filename} is missing") from exc
+    if stat.st_size != artifact.get("size_bytes"):
+        raise ValueError(f"authoritative artifact size mismatch for {filename}")
+    if _sha256(confined) != artifact.get("sha256"):
+        raise ValueError(f"authoritative artifact hash mismatch for {filename}")
+    return confined
 
 
 def _slugify(value: str) -> str:
@@ -130,9 +170,26 @@ class CanDecodeManager:
             raise ValueError("source manifest is missing or malformed") from exc
         if source_manifest.get("run_id") != request.source_run_id:
             raise ValueError("source manifest run ID does not match its directory")
+        if self.database is None:
+            raise ValueError("authoritative SQLite source evidence is required")
+        source_record = self.database.get_capture_by_run_id(request.source_run_id)
+        if source_record is None:
+            raise ValueError("authoritative SQLite source row is missing")
+        if source_record.get("status") != "complete":
+            raise ValueError("authoritative SQLite source is not complete")
+        authoritative_manifest_path = validated_artifact_path(
+            self.data_dir, source_record, "manifest.json"
+        )
+        if authoritative_manifest_path != manifest_path.resolve():
+            raise ValueError("source manifest path does not match authoritative SQLite")
 
         capture_type = source_manifest.get("capture_type")
         profile = source_manifest.get("profile")
+        if source_record.get("capture_type") != capture_type:
+            raise ValueError("source capture type does not match authoritative SQLite")
+        recorded_profile = source_record.get("metadata", {}).get("profile")
+        if recorded_profile != profile:
+            raise ValueError("source profile does not match authoritative SQLite")
         if capture_type == "bus_survey":
             classification = source_manifest.get("summary", {}).get("classification", {})
             if not eligible_bus_survey_classification(classification):
@@ -143,17 +200,32 @@ class CanDecodeManager:
         else:
             raise ValueError("source capture is not an eligible network or CAN bus survey capture")
 
-        source_path = source_dir / source_artifact
-        if source_path.is_symlink():
-            raise ValueError("source artifact symlinks are not allowed")
+        confined_source = validated_artifact_path(
+            self.data_dir, source_record, source_artifact
+        )
+        source_artifact_record = _artifact_by_filename(source_record, source_artifact)
+        assert source_artifact_record is not None
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(confined_source, flags)
         try:
-            confined_source = _confined(source_path, self.data_dir)
-        except FileNotFoundError as exc:
-            raise ValueError(f"source artifact {source_artifact} is missing") from exc
-        if source_dir.resolve() not in confined_source.parents:
-            raise ValueError("source artifact escapes its capture directory")
-        self._preflight_waveform(confined_source)
-        source_sha256 = _sha256(confined_source)
+            before = os.fstat(descriptor)
+            if before.st_size <= 0 or before.st_size > MAX_SOURCE_BYTES:
+                raise ValueError("source waveform exceeds the bounded file-size limit")
+            with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                source_bytes = handle.read(MAX_SOURCE_BYTES + 1)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        if (
+            (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        ):
+            raise RuntimeError("source waveform changed during decode")
+        source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+        if before.st_size != source_artifact_record.get("size_bytes"):
+            raise ValueError("source waveform size does not match authoritative SQLite")
+        if source_sha256 != source_artifact_record.get("sha256"):
+            raise ValueError("source waveform hash does not match authoritative SQLite")
         recorded_hashes = source_manifest.get("sha256")
         recorded_source_hash = (
             recorded_hashes.get(source_artifact)
@@ -162,7 +234,7 @@ class CanDecodeManager:
         )
         if recorded_source_hash != source_sha256:
             raise ValueError("source waveform hash does not match its immutable manifest")
-        time_us, can_h, can_l = self._load_waveform(confined_source)
+        time_us, can_h, can_l = self._load_waveform_bytes(source_bytes)
         decoded = decode_can_waveform(time_us, can_h, can_l)
         frames = sorted(
             decoded["frames"],
@@ -175,8 +247,6 @@ class CanDecodeManager:
         if not frames:
             raise ValueError("source contains no validated Classical CAN frames")
         identifiers = aggregate_can_identifiers(frames)
-        if _sha256(confined_source) != source_sha256:
-            raise RuntimeError("source waveform changed during decode")
 
         captured_at = datetime.now(UTC)
         run_id = (
@@ -186,12 +256,7 @@ class CanDecodeManager:
         partial = Path(tempfile.mkdtemp(prefix=f".{run_id}.partial-", dir=self.data_dir))
         final = self.data_dir / run_id
         capture_id: int | None = None
-        source_record = (
-            self.database.get_capture_by_run_id(request.source_run_id)
-            if self.database is not None
-            else None
-        )
-        source_capture_id = source_record.get("id") if source_record else None
+        source_capture_id = source_record["id"]
         settings = {
             "decoder_version": DECODER_VERSION,
             "classical_can_only": True,
@@ -268,19 +333,19 @@ class CanDecodeManager:
                     "summary.json": ("summary", "application/json"),
                     "manifest.json": ("manifest", "application/json"),
                 }
+                registrations = []
                 for name in artifacts:
                     path = final / name
                     kind, media_type = media[name]
-                    self.database.add_artifact(
-                        capture_id=capture_id,
-                        kind=kind,
-                        filename=name,
-                        relative_path=f"{run_id}/{name}",
-                        media_type=media_type,
-                        size_bytes=path.stat().st_size,
-                        sha256=_sha256(path),
-                    )
-                self.database.set_capture_status(capture_id, "complete")
+                    registrations.append({
+                        "kind": kind,
+                        "filename": name,
+                        "relative_path": f"{run_id}/{name}",
+                        "media_type": media_type,
+                        "size_bytes": path.stat().st_size,
+                        "sha256": _sha256(path),
+                    })
+                self.database.complete_capture_with_artifacts(capture_id, registrations)
             return manifest
         except Exception:
             shutil.rmtree(partial, ignore_errors=True)
@@ -305,7 +370,17 @@ class CanDecodeManager:
     @staticmethod
     def _load_waveform(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         CanDecodeManager._preflight_waveform(path)
-        with path.open("r", encoding="utf-8", newline="") as handle:
+        return CanDecodeManager._load_waveform_bytes(path.read_bytes())
+
+    @staticmethod
+    def _load_waveform_bytes(data: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if data.count(b"\n") > MAX_SOURCE_SAMPLES + 1:
+            raise ValueError("source waveform exceeds the bounded sample-count limit")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeError as exc:
+            raise ValueError("source waveform is malformed") from exc
+        with io.StringIO(text, newline="") as handle:
             header_line = handle.readline(4097)
             if not header_line.endswith("\n") or len(header_line) > 4096:
                 raise ValueError("source waveform header is missing or too long")
@@ -326,7 +401,7 @@ class CanDecodeManager:
             raise ValueError("source waveform is malformed: header does not match a supported exact schema")
         try:
             values = np.loadtxt(
-                path,
+                io.StringIO(text),
                 delimiter=",",
                 skiprows=1,
                 usecols=tuple(indices),

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from remote_dan.can_analysis import analyze_can_waveform
+import remote_dan.can_analysis as can_analysis
+from remote_dan.can_analysis import _parse_classic_frame, analyze_can_waveform
 
 
 def _bits(value: int, width: int) -> list[int]:
@@ -38,7 +40,12 @@ def _can_crc15(bits: list[int]) -> list[int]:
     return _bits(crc, 15)
 
 
-def _classic_extended_frame(identifier: int, data: bytes) -> list[int]:
+def _classic_extended_frame(
+    identifier: int,
+    data: bytes,
+    *,
+    r1: int = 0,
+) -> list[int]:
     identifier_a = identifier >> 18
     identifier_b = identifier & ((1 << 18) - 1)
     header_and_data = (
@@ -46,7 +53,7 @@ def _classic_extended_frame(identifier: int, data: bytes) -> list[int]:
         + _bits(identifier_a, 11)
         + [1, 1]
         + _bits(identifier_b, 18)
-        + [0, 0, 0]
+        + [0, r1, 0]
         + _bits(len(data), 4)
         + [bit for value in data for bit in _bits(value, 8)]
     )
@@ -64,6 +71,78 @@ def _classic_standard_frame(identifier: int, data: bytes) -> list[int]:
     )
     crc = _can_crc15(header_and_data)
     return _stuff(header_and_data + crc) + [1, 0, 1] + [1] * 7 + [1] * 3
+
+
+def _terminal_crc_stuff_frame() -> tuple[list[int], int]:
+    for identifier in range(0x800):
+        body = [0] + _bits(identifier, 11) + [0, 0, 0] + _bits(0, 4)
+        stuffed = _stuff(body + _can_crc15(body))
+        if len(stuffed) >= 5 and len(set(stuffed[-5:])) == 1:
+            terminal_stuff = 1 - stuffed[-1]
+            return (
+                stuffed + [terminal_stuff, 1, 0, 1] + [1] * 7 + [1] * 3,
+                identifier,
+            )
+    raise AssertionError("failed to synthesize terminal CRC stuff case")
+
+
+def test_classic_parser_consumes_and_validates_terminal_crc_stuff_bit() -> None:
+    frame, identifier = _terminal_crc_stuff_frame()
+
+    decoded = _parse_classic_frame(frame)
+
+    assert decoded is not None
+    assert decoded["identifier"] == identifier
+    terminal_stuff_index = int(decoded["complete_raw_bit_count"]) - 11
+    assert _parse_classic_frame(frame[:terminal_stuff_index] + frame[terminal_stuff_index + 1:]) is None
+    malformed = list(frame)
+    malformed[terminal_stuff_index] = 1 - malformed[terminal_stuff_index]
+    assert _parse_classic_frame(malformed) is None
+
+
+@pytest.mark.parametrize("r1, valid", [(0, True), (1, False)])
+def test_classic_extended_parser_requires_dominant_r1(r1: int, valid: bool) -> None:
+    decoded = _parse_classic_frame(
+        _classic_extended_frame(0x18F00401, b"\x11\x22", r1=r1)
+    )
+
+    assert (decoded is not None) is valid
+
+
+@pytest.mark.parametrize(
+    ("expected", "reversed_result", "selected"),
+    [
+        ((4, 1), (2, 0), "expected"),
+        ((1, 0), (5, 2), "reversed"),
+        ((3, 1), (3, 1), "expected"),
+        ((0, 0), (0, 0), "expected"),
+    ],
+)
+def test_decode_selects_stronger_complete_frame_orientation(
+    monkeypatch: pytest.MonkeyPatch,
+    expected: tuple[int, int],
+    reversed_result: tuple[int, int],
+    selected: str,
+) -> None:
+    calls = iter((expected, reversed_result))
+
+    def fake_decode(*_args: object) -> dict[str, object]:
+        frame_count, rejected_count = next(calls)
+        return {
+            "frames": [{"identifier": index} for index in range(frame_count)],
+            "rejected_candidate_count": rejected_count,
+        }
+
+    monkeypatch.setattr(can_analysis, "_decode_can_orientation", fake_decode)
+    samples = np.asarray([0.0, 0.1, 0.2])
+
+    decoded = can_analysis.decode_can_waveform(samples, samples, samples)
+
+    assert decoded["polarity"] == selected
+    assert len(decoded["frames"]) == (
+        expected[0] if selected == "expected" else reversed_result[0]
+    )
+    assert bool(decoded["warnings"]) is (selected == "reversed")
 
 
 def _fd_standard_frame(identifier: int, data: bytes, *, brs: bool = False) -> list[int]:

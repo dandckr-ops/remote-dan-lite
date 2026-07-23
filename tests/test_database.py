@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -94,6 +95,37 @@ def test_database_enforces_artifact_capture_foreign_key(tmp_path: Path) -> None:
             size_bytes=1,
             sha256="b" * 64,
         )
+
+
+def test_complete_capture_with_artifacts_is_atomic(tmp_path: Path) -> None:
+    database = EvidenceDatabase(tmp_path / "evidence.sqlite3")
+    database.initialize()
+    capture_id = database.create_capture(
+        run_id="atomic-child",
+        captured_at="2026-07-23T12:00:00+00:00",
+        capture_type="can_decode",
+        label="atomic",
+        backend="test",
+    )
+    artifact = {
+        "kind": "summary",
+        "filename": "summary.json",
+        "relative_path": "atomic-child/summary.json",
+        "media_type": "application/json",
+        "size_bytes": 2,
+        "sha256": "0" * 64,
+    }
+
+    with pytest.raises(sqlite3.IntegrityError):
+        database.complete_capture_with_artifacts(
+            capture_id,
+            [artifact, dict(artifact)],
+        )
+
+    saved = database.get_capture(capture_id)
+    assert saved is not None
+    assert saved["status"] == "pending"
+    assert saved["artifacts"] == []
 
 
 def test_capture_manager_assigns_database_ids_to_capture_and_artifacts(tmp_path: Path) -> None:
