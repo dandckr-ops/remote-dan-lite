@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07100D">
-  <title>Remote Dan Lite · Traceworks Capture Console</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <title>Remote Dan Lite · Traceworks Console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css?v=tabs-1">
 </head>
 <body>
   <div class="shell">
@@ -21,82 +22,205 @@
       </div>
     </header>
 
-    <main class="layout">
-      <section class="instrument panel">
-        <div class="panel-heading">
-          <div><span class="section-number">01</span><h2>Capture window</h2></div>
-          <p>Bounded acquisition · one operator action</p>
-        </div>
-        <form id="capture-form" class="capture-form">
-          <label class="field wide">
-            <span>Evidence label</span>
-            <input id="label" name="label" maxlength="80" value="bench CAN proof" autocomplete="off">
-          </label>
-          <label class="field">
-            <span>Window</span>
-            <select id="preset" name="preset">
-              <option value="short">Short · 40 ms</option>
-              <option value="medium">Medium · 200 ms</option>
-              <option value="long">Long · 500 ms</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Source</span>
-            <select id="mode" name="mode">
-              <option value="auto">Auto</option>
-              <option value="simulator">Simulator</option>
-              <option value="hardware">Pico hardware</option>
-            </select>
-          </label>
-          <button class="capture-button" id="capture-button" type="submit">
-            <span class="button-mark"></span>
-            Arm & capture
-          </button>
-        </form>
-        <div class="message" id="message">Waiting for operator.</div>
+    <nav class="tab-bar" role="tablist" aria-label="Remote Dan workspace">
+      <button class="tab-button" type="button" role="tab" id="tab-overview" data-tab="overview" aria-controls="panel-overview" aria-selected="true" tabindex="0"><span>01</span>Overview</button>
+      <button class="tab-button" type="button" role="tab" id="tab-scope" data-tab="scope" aria-controls="panel-scope" aria-selected="false" tabindex="-1"><span>02</span>Scope</button>
+      <button class="tab-button" type="button" role="tab" id="tab-serial" data-tab="serial" aria-controls="panel-serial" aria-selected="false" tabindex="-1"><span>03</span>Serial</button>
+      <button class="tab-button" type="button" role="tab" id="tab-can" data-tab="can" aria-controls="panel-can" aria-selected="false" tabindex="-1"><span>04</span>CAN</button>
+      <button class="tab-button" type="button" role="tab" id="tab-tests" data-tab="tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1"><span>05</span>Tests</button>
+      <button class="tab-button" type="button" role="tab" id="tab-timeline" data-tab="timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><span>06</span>Timeline</button>
+      <button class="tab-button" type="button" role="tab" id="tab-evidence" data-tab="evidence" aria-controls="panel-evidence" aria-selected="false" tabindex="-1"><span>07</span>Evidence</button>
+    </nav>
 
-        <div class="channel-strip" aria-label="Configured channels">
-          <article><b>A</b><span>VBAT</span><small>battery / supply</small></article>
-          <article class="live"><b>B</b><span>CAN-H</span><small>signal high</small></article>
-          <article class="live alt"><b>C</b><span>CAN-L</span><small>signal low</small></article>
-          <article class="muted"><b>D</b><span>TRIG</span><small>reserved</small></article>
+    <main class="workspace">
+      <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
+        <div class="overview-grid">
+          <section class="panel battery-card">
+            <div class="panel-heading compact">
+              <div><span class="section-number">A</span><h2>Battery voltage</h2></div>
+              <p>Latest capture mean</p>
+            </div>
+            <div class="digital-readout" aria-live="polite">
+              <strong id="vbat-value">--.--</strong><span>V</span>
+            </div>
+            <p class="readout-detail" id="vbat-detail">No capture loaded. Raw VBAT remains in every evidence package.</p>
+          </section>
+
+          <section class="panel latest-card">
+            <div class="panel-heading compact">
+              <div><span class="section-number">B</span><h2>Latest capture</h2></div>
+            </div>
+            <dl class="node-facts latest-facts">
+              <div><dt>Label</dt><dd id="latest-label">—</dd></div>
+              <div><dt>Backend</dt><dd id="latest-backend">—</dd></div>
+              <div><dt>Window</dt><dd id="latest-window">—</dd></div>
+              <div><dt>Captured</dt><dd id="latest-time">—</dd></div>
+            </dl>
+          </section>
+
+          <section class="panel node-card">
+            <div class="panel-heading compact">
+              <div><span class="section-number">C</span><h2>Capture plane</h2></div>
+            </div>
+            <dl class="node-facts">
+              <div><dt>Service</dt><dd id="service-version">—</dd></div>
+              <div><dt>Default backend</dt><dd id="backend">—</dd></div>
+              <div><dt>PS2000A driver</dt><dd id="driver">—</dd></div>
+              <div><dt>Pico USB</dt><dd id="device">—</dd></div>
+            </dl>
+            <p class="hardware-note" id="hardware-note">Probing capture hardware.</p>
+          </section>
+
+          <section class="panel workflow-card">
+            <div class="panel-heading compact">
+              <div><span class="section-number">D</span><h2>Session workflow</h2></div>
+            </div>
+            <div class="workflow-body">
+              <p>Acquire once. Inspect the same run across Scope, CAN, Timeline, and Evidence.</p>
+              <button class="action-link" type="button" data-open-tab="scope">Open capture controls</button>
+              <button class="action-link secondary" type="button" data-open-tab="evidence">Review evidence packages</button>
+            </div>
+          </section>
         </div>
       </section>
 
-      <aside class="node panel">
-        <div class="panel-heading">
-          <div><span class="section-number">02</span><h2>Capture plane</h2></div>
-        </div>
-        <dl class="node-facts">
-          <div><dt>Service</dt><dd id="service-version">—</dd></div>
-          <div><dt>Default backend</dt><dd id="backend">—</dd></div>
-          <div><dt>PS2000A driver</dt><dd id="driver">—</dd></div>
-          <div><dt>Pico USB</dt><dd id="device">—</dd></div>
-        </dl>
-        <p class="hardware-note" id="hardware-note">Probing capture hardware.</p>
-      </aside>
+      <section class="tab-panel" id="panel-scope" role="tabpanel" aria-labelledby="tab-scope" data-panel="scope" hidden>
+        <div class="scope-layout">
+          <section class="instrument panel">
+            <div class="panel-heading">
+              <div><span class="section-number">01</span><h2>Capture window</h2></div>
+              <p>Bounded acquisition · one operator action</p>
+            </div>
+            <form id="capture-form" class="capture-form">
+              <label class="field wide">
+                <span>Evidence label</span>
+                <input id="label" name="label" maxlength="80" value="bench CAN proof" autocomplete="off">
+              </label>
+              <label class="field">
+                <span>Window</span>
+                <select id="preset" name="preset">
+                  <option value="short">Short · 40 ms</option>
+                  <option value="medium">Medium · 200 ms</option>
+                  <option value="long">Long · 500 ms</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Source</span>
+                <select id="mode" name="mode">
+                  <option value="auto">Auto</option>
+                  <option value="simulator">Simulator</option>
+                  <option value="hardware">Pico hardware</option>
+                </select>
+              </label>
+              <button class="capture-button" id="capture-button" type="submit">
+                <span class="button-mark"></span>
+                Arm & capture
+              </button>
+            </form>
+            <div class="message" id="message" aria-live="polite">Waiting for operator.</div>
 
-      <section class="preview panel">
-        <div class="panel-heading">
-          <div><span class="section-number">03</span><h2>Latest evidence</h2></div>
-          <a id="latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a>
+            <div class="channel-strip" aria-label="Configured channels">
+              <article><b>A</b><span>VBAT</span><small>digital value + raw evidence</small></article>
+              <article class="live"><b>B</b><span>CAN-H</span><small>signal high</small></article>
+              <article class="live alt"><b>C</b><span>CAN-L</span><small>signal low</small></article>
+              <article class="muted"><b>D</b><span>TRIG</span><small>reserved</small></article>
+            </div>
+          </section>
+
+          <section class="preview panel">
+            <div class="panel-heading">
+              <div><span class="section-number">02</span><h2>Latest network waveform</h2></div>
+              <a id="latest-report" class="text-link hidden" href="#">Open Field Journal PDF</a>
+            </div>
+            <div class="scope-grid">
+              <div class="empty-preview" id="empty-preview">
+                <div class="reticle"></div>
+                <strong>No capture loaded</strong>
+                <span>Run a bounded window to populate the evidence plane.</span>
+              </div>
+              <img id="overview" class="overview hidden" alt="Latest CAN-H and CAN-L waveform overview">
+            </div>
+          </section>
         </div>
-        <div class="scope-grid">
-          <div class="empty-preview" id="empty-preview">
-            <div class="reticle"></div>
-            <strong>No capture loaded</strong>
-            <span>Run a bounded window to populate the evidence plane.</span>
+      </section>
+
+      <section class="tab-panel" id="panel-serial" role="tabpanel" aria-labelledby="tab-serial" data-panel="serial" hidden>
+        <section class="panel commissioned-panel">
+          <div class="panel-heading">
+            <div><span class="section-number">03</span><h2>Serial acquisition</h2></div>
+            <span class="status-label planned">Not commissioned</span>
           </div>
-          <img id="overview" class="overview hidden" alt="Latest capture waveform overview">
-        </div>
+          <div class="commissioned-body">
+            <div>
+              <p class="lead">The tab is active; the serial acquisition lane is intentionally not pretending to be ready.</p>
+              <p>Raw electrical and timing evidence will use a direct isolated serial adapter or Pico lane. Structured protocol gateways remain separate satellites.</p>
+            </div>
+            <dl class="boundary-list">
+              <div><dt>Planned roles</dt><dd>SEL / RS-232 · RS-485 tap</dd></div>
+              <div><dt>Initial authority</dt><dd>Receive-only</dd></div>
+              <div><dt>Evidence target</dt><dd>Bytes · timing · framing · CRC</dd></div>
+            </dl>
+          </div>
+        </section>
       </section>
 
-      <section class="runs panel">
-        <div class="panel-heading">
-          <div><span class="section-number">04</span><h2>Field Journal</h2></div>
-          <button id="refresh" class="plain-button" type="button">Refresh</button>
+      <section class="tab-panel" id="panel-can" role="tabpanel" aria-labelledby="tab-can" data-panel="can" hidden>
+        <div class="metric-grid">
+          <article class="panel metric"><span>CAN-H mean</span><strong id="can-h-mean">—</strong><small>V</small></article>
+          <article class="panel metric"><span>CAN-L mean</span><strong id="can-l-mean">—</strong><small>V</small></article>
+          <article class="panel metric"><span>Differential p-p</span><strong id="can-diff-p2p">—</strong><small>V</small></article>
+          <article class="panel metric"><span>Common mode mean</span><strong id="can-common-mean">—</strong><small>V</small></article>
+          <article class="panel metric"><span>H/L correlation</span><strong id="can-correlation">—</strong><small>ratio</small></article>
         </div>
-        <div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div>
+        <section class="preview panel can-preview">
+          <div class="panel-heading">
+            <div><span class="section-number">04</span><h2>CAN pair evidence</h2></div>
+            <p>Shared latest capture · listen-only</p>
+          </div>
+          <div class="scope-grid">
+            <div class="empty-preview" id="can-empty-preview">
+              <div class="reticle"></div>
+              <strong>No CAN evidence loaded</strong>
+              <span>Use Scope to acquire a bounded network capture.</span>
+            </div>
+            <img id="can-overview" class="overview hidden" alt="Latest CAN-H and CAN-L evidence waveform">
+          </div>
+        </section>
+      </section>
+
+      <section class="tab-panel" id="panel-tests" role="tabpanel" aria-labelledby="tab-tests" data-panel="tests" hidden>
+        <section class="panel commissioned-panel">
+          <div class="panel-heading">
+            <div><span class="section-number">05</span><h2>Guided tests</h2></div>
+            <span class="status-label planned">Framework ready</span>
+          </div>
+          <div class="test-grid">
+            <article><strong>Relative compression</strong><span>Connection → signal check → bounded capture → calculation → findings</span><small>Not commissioned</small></article>
+            <article><strong>Cylinder contribution</strong><span>Shared capture engines with explicit stimulus authority</span><small>Not commissioned</small></article>
+            <article><strong>Alternator ripple</strong><span>VBAT time-domain workflow; waveform shown when ripple is the question</span><small>Not commissioned</small></article>
+            <article><strong>Cam / crank correlation</strong><span>Multi-channel timing and event-marker workflow</span><small>Not commissioned</small></article>
+          </div>
+        </section>
+      </section>
+
+      <section class="tab-panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" data-panel="timeline" hidden>
+        <section class="panel">
+          <div class="panel-heading">
+            <div><span class="section-number">06</span><h2>Capture timeline</h2></div>
+            <p>Newest first · shared evidence state</p>
+          </div>
+          <div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div>
+        </section>
+      </section>
+
+      <section class="tab-panel" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence" data-panel="evidence" hidden>
+        <section class="runs panel">
+          <div class="panel-heading">
+            <div><span class="section-number">07</span><h2>Field Journal</h2></div>
+            <button id="refresh" class="plain-button" type="button">Refresh</button>
+          </div>
+          <div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div>
+        </section>
       </section>
     </main>
 
@@ -105,6 +229,6 @@
       <span>Capture / routing / recovery remain separate failure domains</span>
     </footer>
   </div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=tabs-1" defer></script>
 </body>
 </html>

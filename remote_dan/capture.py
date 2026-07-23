@@ -298,7 +298,7 @@ class CaptureManager:
         max_points = 5_000
         stride = max(1, data.preset.samples // max_points)
         t_ms = data.time_us[::stride] / 1000.0
-        colors = {"VBAT": "#FFBC42", "CAN-H": "#5CFF9A", "CAN-L": "#65B7FF"}
+        colors = {"CAN-H": "#5CFF9A", "CAN-L": "#65B7FF"}
 
         with plt.rc_context({
             "figure.facecolor": "#07100D",
@@ -311,16 +311,13 @@ class CaptureManager:
             "grid.color": "#284136",
             "font.family": "DejaVu Sans",
         }):
-            figure, axes = plt.subplots(2, 1, figsize=(12, 7.2), sharex=True, constrained_layout=True)
-            axes[0].plot(t_ms, data.channels["VBAT"][::stride], color=colors["VBAT"], linewidth=1)
-            axes[0].set_ylabel("VBAT / V")
+            figure, axis = plt.subplots(1, 1, figsize=(12, 5.2), constrained_layout=True)
             for name in ("CAN-H", "CAN-L"):
-                axes[1].plot(t_ms, data.channels[name][::stride], label=name, color=colors[name], linewidth=1)
-            axes[1].set_ylabel("BUS / V")
-            axes[1].set_xlabel("TIME / ms")
-            axes[1].legend(loc="upper right", frameon=False)
-            for axis in axes:
-                axis.grid(True, alpha=0.45)
+                axis.plot(t_ms, data.channels[name][::stride], label=name, color=colors[name], linewidth=1)
+            axis.set_ylabel("BUS / V")
+            axis.set_xlabel("TIME / ms")
+            axis.legend(loc="upper right", frameon=False)
+            axis.grid(True, alpha=0.45)
             figure.suptitle(f"FIELD JOURNAL · {request.label.strip() or 'CAPTURE'} · {data.preset.name.upper()}")
             figure.savefig(png_path, dpi=150, metadata={"Software": "Remote Dan Lite"})
             figure.savefig(pdf_path, format="pdf", metadata={

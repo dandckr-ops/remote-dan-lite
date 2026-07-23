@@ -25,7 +25,7 @@ This repository deliberately separates proven behavior from source-complete and 
 | Pi 5 + PicoScope 2406B network capture | **Proven** | Hardware acquisition has produced bounded VBAT/CAN captures and downloadable evidence packages. |
 | Artifact generation | **Proven** | Each run produces CSV, JSON, PNG, PDF, and a checksum manifest. |
 | SQLite evidence index | **Implemented and tested in this repository** | The schema and repository preserve lineage, but the currently deployed appliance runtime still needs a governed rollout of this source revision. |
-| Session-centered tabs | **Designed** | The information architecture is approved; the current web console remains a single-page capture surface. |
+| Session-centered tabs | **Implemented in this repository** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence share one capture state. Serial and guided-test acquisition remain explicit commissioning boundaries. |
 | Anybus AB7702 Modbus satellite | **Connected satellite** | The gateway is configured and reachable for Modbus TCP/RTU. Remote Dan API/UI integration is still pending. |
 | OOB recovery node and field enclosure | **Architecture target** | These remain part of the three-plane appliance design, not a claim that the finished enclosure is commissioned. |
 
@@ -64,9 +64,9 @@ The default product split is intentional:
 
 See [`docs/architecture.md`](docs/architecture.md) for the full status vocabulary, tab map, evidence model, and Modbus boundary.
 
-## Planned operator surface
+## Operator surface
 
-The approved primary navigation is:
+The implemented primary navigation is:
 
 `Overview · Scope · Serial · CAN · Tests · Timeline · Evidence`
 
@@ -174,8 +174,8 @@ git diff --check
 - [x] SQLite schema and capture/artifact lineage in governed source
 - [ ] deploy the database-backed source revision to the appliance
 - [ ] session/asset/case APIs and dashboard selectors
-- [ ] tabbed Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence UI
-- [ ] digital VBAT presentation alongside CAN waveform review
+- [x] tabbed Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence UI
+- [x] digital VBAT presentation alongside CAN-only network waveform review
 - [ ] read-only Anybus Modbus satellite integration and transaction logging
 - [ ] synchronized serial/CAN/event-marker correlation
 - [ ] guided relative-compression and cylinder-contribution workflows

@@ -17,7 +17,7 @@ At the current repository baseline:
 - Pi 5 + PicoScope 2406B network capture is **proven**.
 - CSV, JSON, PNG, PDF, and checksum artifacts are **proven**.
 - SQLite metadata and evidence lineage are **in governed source**.
-- The session-centered tabs are **designed**.
+- Seven session-centered tabs are **implemented in governed source** and share one capture state; Serial and guided-test acquisition remain commissioning boundaries.
 - The Anybus AB7702 is a **connected satellite**; Remote Dan integration is pending.
 - The complete three-device enclosure and independent recovery hardware remain an architecture target.
 
@@ -76,7 +76,7 @@ It should remain simpler than the capture node and should not depend on the capt
 
 ## Session-centered operator surface
 
-The approved primary tabs are:
+The implemented primary tabs are:
 
 1. **Overview** — hardware readiness, supply voltage, synchronization, storage, capture state, and recent sessions
 2. **Scope** — general waveform acquisition and review
@@ -235,11 +235,10 @@ Do not infer that a feature is live because it appears in Git. Conversely, runti
 
 ## Current next slices
 
-1. Present VBAT as a digital `xx.xx V` value while preserving its raw samples.
-2. Reconcile and deploy the database-backed source revision to the appliance.
-3. Add asset/case/session API surfaces.
-4. Build Overview and persistent session context.
-5. Add the remaining primary tab shells without duplicating acquisition engines.
-6. Integrate the Anybus satellite read-only with durable transaction logging.
-7. Add timeline correlation and guided test workflows.
-8. Commission independent recovery hardware and the final enclosure.
+1. Reconcile and deploy the database-backed tabbed source revision to the appliance.
+2. Add asset/case/session API surfaces and selectors.
+3. Commission the raw Serial acquisition lane.
+4. Integrate the Anybus satellite read-only with durable transaction logging.
+5. Add richer cross-source timeline correlation.
+6. Commission guided test workflows without duplicating acquisition engines.
+7. Commission independent recovery hardware and the final enclosure.
