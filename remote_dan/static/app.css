@@ -51,7 +51,7 @@ h1 span { color: var(--muted); font-weight: 400; }
 
 .tab-bar {
   display: grid;
-  grid-template-columns: repeat(9, minmax(132px, 1fr));
+  grid-template-columns: repeat(11, minmax(132px, 1fr));
   overflow-x: auto;
   border: 1px solid var(--rule);
   background: rgba(7, 16, 13, .94);
@@ -126,6 +126,34 @@ h1 span { color: var(--muted); font-weight: 400; }
 .usb-routing-device select { width: min(210px, 48%); font-size: 10px; }
 .usb-routing-apply { width: 100%; margin-top: 14px; }
 .usb-routing-apply:disabled { cursor: not-allowed; opacity: .5; }
+.loadbank-owner-panel, .loadbank-collection-panel { margin-bottom: 18px; }
+.loadbank-owner-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, .28fr); align-items: stretch; gap: 14px; padding: 18px 20px 0; }
+.loadbank-owner-choices { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--rule); }
+.loadbank-owner-choices legend { max-width: 100%; padding: 0 7px; color: var(--muted); font-size: 9px; line-height: 1.4; letter-spacing: .09em; text-transform: uppercase; white-space: normal; }
+.loadbank-owner-choices label { display: grid; grid-template-columns: auto 1fr; align-content: center; gap: 5px 9px; min-height: 76px; padding: 12px; border: 1px solid var(--rule); cursor: pointer; }
+.loadbank-owner-choices input { grid-row: 1 / 3; align-self: center; width: 18px; height: 18px; margin: 0; accent-color: var(--live); }
+.loadbank-owner-choices strong { font-family: var(--condensed); font-size: 18px; text-transform: uppercase; }
+.loadbank-owner-choices span { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.loadbank-owner-choices:disabled label { opacity: .52; cursor: not-allowed; }
+.loadbank-owner-form .capture-button { grid-column: auto; min-height: 100%; }
+.loadbank-endpoint { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 16px 20px; border-bottom: 1px solid var(--rule); }
+.loadbank-endpoint span { color: var(--muted); font-size: 9px; letter-spacing: .09em; text-transform: uppercase; }
+.loadbank-endpoint strong { color: var(--live); font-family: var(--condensed); font-size: 22px; }
+.loadbank-endpoint small { color: var(--muted); font-size: 9px; text-align: right; }
+.loadbank-session-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 18px 20px; }
+.loadbank-discovery-control { grid-column: span 3; display: grid; grid-template-columns: minmax(210px, .55fr) minmax(260px, 1fr); align-items: end; gap: 12px; }
+.loadbank-discovery-control .tool-button { min-height: 44px; }
+.loadbank-session-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr minmax(220px, .3fr); gap: 12px; }
+.loadbank-session-actions .capture-button { grid-column: auto; }
+.loadbank-session-actions .tool-button { border-color: var(--danger); }
+.loadbank-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.loadbank-session-list { display: grid; }
+.loadbank-session-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; min-height: 78px; padding: 14px 18px; border-bottom: 1px solid rgba(40, 65, 54, .6); }
+.loadbank-session-card:last-child { border-bottom: 0; }
+.loadbank-session-card strong, .loadbank-session-card small { display: block; }
+.loadbank-session-card strong { font-size: 12px; }
+.loadbank-session-card small { margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.loadbank-session-card a { color: var(--cream); font-size: 10px; text-decoration: none; border-bottom: 1px solid var(--rule); }
 .digital-readout { display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 30px 18px 12px; }
 .digital-readout strong { color: var(--amber); font-family: var(--condensed); font-size: clamp(76px, 10vw, 132px); font-weight: 600; line-height: .8; letter-spacing: .025em; font-variant-numeric: tabular-nums; text-shadow: 0 0 28px rgba(255, 188, 66, .16); }
 .digital-readout span { color: var(--muted); font-family: var(--condensed); font-size: 30px; }
@@ -308,6 +336,76 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 .run-card a { color: var(--cream); font-size: 10px; text-decoration: none; border-bottom: 1px solid var(--rule); }
 .empty-list { margin: 0; padding: 24px; color: var(--muted); font-size: 11px; }
 
+.obd-connection-panel { overflow: visible; }
+.obd-boundary { margin: 0; padding: 16px 20px; color: var(--muted); font-size: 11px; line-height: 1.65; border-bottom: 1px solid var(--rule); }
+.obd-toolbar { display: grid; grid-template-columns: minmax(240px, 1.5fr) minmax(190px, 1fr) auto auto; gap: 12px; align-items: end; padding: 18px 20px; border-bottom: 1px solid var(--rule); }
+.obd-toolbar .capture-button, .obd-toolbar .plain-button { min-height: 43px; grid-column: auto; }
+.obd-connection-grid, .obd-vehicle-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.obd-connection-grid > div, .obd-vehicle-facts > div { min-width: 0; padding: 16px 18px; border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+.obd-connection-grid > div:last-child, .obd-vehicle-facts > div:last-child { border-right: 0; }
+.obd-connection-grid dt, .obd-vehicle-facts dt { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.obd-connection-grid dd, .obd-vehicle-facts dd { margin: 8px 0 0; overflow-wrap: anywhere; color: var(--cream); font-size: 12px; }
+.obd-vin-result { display: grid; gap: 8px; padding: 22px 20px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: rgba(92, 255, 154, .035); }
+.obd-vin-result span, .obd-vin-result small { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
+.obd-vin-result strong { color: var(--cream); font-family: var(--mono); font-size: clamp(22px, 4vw, 38px); line-height: 1.15; letter-spacing: .08em; overflow-wrap: anywhere; outline: none; }
+.obd-vin-result.success { border-color: rgba(92, 255, 154, .65); background: rgba(92, 255, 154, .10); box-shadow: inset 4px 0 0 var(--live); }
+.obd-vin-result.success strong, .obd-vin-result.success b { color: var(--live); }
+.obd-vin-result.error { border-color: rgba(255, 91, 76, .65); box-shadow: inset 4px 0 0 var(--danger); }
+.obd-fault-summary { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; align-items: center; padding: 20px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: rgba(255, 184, 77, .035); }
+.obd-fault-summary span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; }
+.obd-fault-summary strong { grid-row: 1 / span 2; color: var(--cream); font-family: var(--mono); font-size: clamp(52px, 18vw, 86px); line-height: .9; outline: none; }
+.obd-fault-summary small { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.obd-fault-summary.alert { border-color: rgba(255, 184, 77, .7); background: rgba(255, 184, 77, .11); box-shadow: inset 5px 0 0 var(--amber); }
+.obd-fault-summary.alert strong, .obd-fault-summary.alert small { color: var(--amber); }
+.obd-fault-summary.clear { border-color: rgba(92, 255, 154, .6); background: rgba(92, 255, 154, .08); box-shadow: inset 5px 0 0 var(--live); }
+.obd-fault-summary.clear strong, .obd-fault-summary.clear small { color: var(--live); }
+.obd-fault-summary.error { border-color: rgba(255, 91, 76, .65); box-shadow: inset 5px 0 0 var(--danger); }
+.obd-subnav { margin-top: 14px; border: 1px solid var(--rule); background: var(--panel-deep); overflow-x: auto; }
+.obd-tab-bar { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); min-width: 560px; }
+.obd-tab-bar button { min-height: 48px; border: 0; border-right: 1px solid var(--rule); background: transparent; color: var(--muted); font-family: var(--condensed); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
+.obd-tab-bar button:last-child { border-right: 0; }
+.obd-tab-bar button[aria-selected="true"] { background: rgba(92, 255, 154, .08); color: var(--live); box-shadow: inset 0 -2px 0 var(--live); }
+.obd-tab-bar button:focus-visible { outline: 2px solid var(--cream); outline-offset: -3px; }
+.obd-subpanel { margin-top: 14px; }
+.obd-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.obd-actions .plain-button, .obd-record-form .plain-button, #obd-record-refresh-button { min-height: 44px; padding: 10px 12px; }
+.obd-updated { margin: 0; padding: 0 20px 14px; color: var(--muted); font-size: 9px; }
+.obd-live-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.obd-live-grid > .empty-list { grid-column: 1 / -1; }
+.obd-live-card { min-height: 122px; padding: 18px; border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+.obd-live-card:nth-child(4n) { border-right: 0; }
+.obd-live-card span, .obd-live-card small { display: block; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.obd-live-card strong { display: block; margin: 16px 0 12px; color: var(--cream); font-family: var(--condensed); font-size: 27px; }
+.obd-live-card.fresh small { color: var(--live); }
+.obd-live-card.stale { opacity: .65; }
+.obd-live-card.stale small { color: var(--amber); }
+.obd-readiness { padding: 18px 20px; border-top: 1px solid var(--rule); }
+.obd-readiness h3, .obd-fault-grid h3, .obd-clear-panel h3, .obd-record-form h3 { margin: 0 0 12px; font-family: var(--condensed); font-size: 17px; text-transform: uppercase; }
+#obd-readiness-list { display: grid; gap: 8px; }
+#obd-readiness-list article { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--rule); }
+#obd-readiness-list span { color: var(--muted); font-size: 10px; }
+.obd-fault-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.obd-fault-grid > section { padding: 18px; border-right: 1px solid var(--rule); }
+.obd-fault-grid > section:last-child { border-right: 0; }
+.obd-fault-grid h3 span { color: var(--live); }
+.obd-service-status { margin: -6px 0 12px; color: var(--amber); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.obd-fault-grid ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.obd-fault-grid li { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--rule); color: var(--muted); font-size: 10px; }
+.obd-fault-grid li strong { color: var(--cream); font-family: var(--condensed); font-size: 20px; }
+.obd-fault-grid li small { color: var(--amber); }
+.obd-clear-panel { padding: 20px; border-top: 1px solid #693d37; background: rgba(255, 91, 76, .045); }
+.obd-clear-panel p { max-width: 1000px; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.danger-button { min-height: 42px; padding: 0 18px; border: 1px solid #a44d43; background: #351714; color: #ffaaa1; font: 700 11px var(--condensed); text-transform: uppercase; letter-spacing: .07em; }
+.danger-button:disabled { opacity: .45; cursor: not-allowed; }
+.obd-vehicle-facts { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.obd-record-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.obd-record-form { display: grid; align-content: start; gap: 11px; padding: 18px; border-right: 1px solid var(--rule); }
+.obd-record-form:last-child { border-right: 0; }
+.obd-record-list { display: grid; border-top: 1px solid var(--rule); }
+.obd-record-list article { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.obd-record-list article:last-child { border-bottom: 0; }
+.obd-record-list span, .obd-record-list small { color: var(--muted); font-size: 10px; }
+
 footer { display: flex; justify-content: space-between; gap: 18px; color: var(--muted); font-size: 9px; line-height: 1.5; text-transform: uppercase; letter-spacing: .08em; padding: 18px 2px 0; }
 
 .can-diagnostic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); border-left: 1px solid var(--rule); }
@@ -340,7 +438,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
 .can-comparison-row span { color: var(--muted); }
 
 @media (max-width: 1050px) {
-  .tab-bar { grid-template-columns: repeat(9, minmax(122px, 1fr)); }
+  .tab-bar { grid-template-columns: repeat(11, minmax(122px, 1fr)); }
   .tab-button { min-width: 122px; }
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .can-capture-form { grid-template-columns: 1fr 1fr; }
@@ -358,6 +456,18 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .analysis-metric:nth-child(2n) { border-right: 0; }
   .analysis-metric:nth-last-child(-n + 4) { border-bottom: 1px solid var(--rule); }
   .analysis-metric:nth-last-child(-n + 2) { border-bottom: 0; }
+  .loadbank-owner-form { grid-template-columns: 1fr; }
+  .loadbank-owner-form .capture-button { min-height: 48px; }
+  .loadbank-session-form { grid-template-columns: 1fr 1fr; }
+  .loadbank-discovery-control { grid-column: 1 / -1; }
+  .obd-toolbar { grid-template-columns: 1fr 1fr; }
+  .obd-toolbar .capture-button, .obd-toolbar .plain-button { grid-column: auto; }
+  .obd-live-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .obd-live-card:nth-child(4n) { border-right: 1px solid var(--rule); }
+  .obd-live-card:nth-child(3n) { border-right: 0; }
+  .obd-record-grid { grid-template-columns: 1fr 1fr; }
+  .obd-record-form:nth-child(2) { border-right: 0; }
+  .obd-record-form:last-child { grid-column: 1 / -1; border-top: 1px solid var(--rule); }
 }
 
 @media (max-width: 900px) {
@@ -388,7 +498,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .shell { width: min(100% - 22px, 1520px); padding-top: 24px; }
   .masthead { flex-direction: column; align-items: flex-start; }
   .status-stack { text-align: left; }
-  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(9, 112px); }
+  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(11, 112px); }
   .tab-button { min-width: 112px; font-size: 10px; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .panel-heading > div { width: 100%; }
@@ -404,7 +514,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .profile-button, .profile-button:nth-child(3) { border-right: 1px solid var(--rule); }
   .profile-button:nth-child(2n) { border-right: 0; }
   .profile-button:last-child { grid-column: 1 / -1; border-right: 0; }
-  .scope-capture-form, .can-capture-form, .serial-capture-form, .sniffer-form, .modbus-scan-form { grid-template-columns: 1fr; }
+  .scope-capture-form, .can-capture-form, .serial-capture-form, .sniffer-form, .modbus-scan-form, .loadbank-session-form { grid-template-columns: 1fr; }
   .scope-label-field, .capture-button, .can-capture-form .capture-button, .serial-label, .serial-capture-form .capture-button, .sniffer-form .capture-button, .modbus-scan-form .capture-button { grid-column: 1; }
   .serial-decode-grid { grid-template-columns: 1fr; }
   .serial-decode-grid article { border-right: 0; border-bottom: 1px solid var(--rule); }
@@ -424,11 +534,24 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .analysis-metric, .analysis-metric:nth-child(2n), .analysis-metric:nth-child(4n), .analysis-metric:nth-last-child(-n + 4), .analysis-metric:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
   .analysis-metric:last-child { border-bottom: 0; }
   .analysis-detail { grid-template-columns: 1fr; gap: 10px; }
+  .loadbank-owner-choices, .loadbank-discovery-control, .loadbank-session-actions, .loadbank-endpoint { grid-template-columns: 1fr; }
+  .loadbank-discovery-control { grid-column: 1; }
+  .loadbank-endpoint small { text-align: left; }
+  .loadbank-metrics { grid-template-columns: 1fr; }
+  .loadbank-session-card { grid-template-columns: 1fr; }
   .test-grid { grid-template-columns: 1fr; }
   .test-grid article, .test-grid article:nth-child(2n), .test-grid article:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
   .test-grid article:last-child { border-bottom: 0; }
   .timeline-event { grid-template-columns: auto minmax(0, 1fr); }
   .timeline-event > a { grid-column: 2; justify-self: start; }
   .run-card { grid-template-columns: 1fr; }
+  .obd-toolbar, .obd-connection-grid, .obd-vehicle-facts, .obd-live-grid, .obd-fault-grid, .obd-record-grid { grid-template-columns: 1fr; }
+  .obd-toolbar .capture-button, .obd-toolbar .plain-button { grid-column: 1; }
+  .obd-connection-grid > div, .obd-vehicle-facts > div, .obd-live-card, .obd-live-card:nth-child(3n), .obd-live-card:nth-child(4n), .obd-fault-grid > section, .obd-record-form, .obd-record-form:nth-child(2) { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .obd-connection-grid > div:last-child, .obd-vehicle-facts > div:last-child, .obd-fault-grid > section:last-child, .obd-record-form:last-child { border-bottom: 0; }
+  .obd-record-form:last-child { grid-column: auto; }
+  .obd-record-list article { grid-template-columns: 1fr; }
+  .obd-actions { width: 100%; }
+  .obd-tab-bar { min-width: 560px; }
   footer { flex-direction: column; }
 }

@@ -30,7 +30,8 @@ This repository deliberately separates proven behavior from source-complete and 
 | SQLite evidence index | **Proven live** | The appliance preserves capture/artifact lineage locally while waveform and report files remain ordinary filesystem artifacts. |
 | Passive Serial receive lane | **In governed source; simulator proven** | RX-only capture, termios framing, raw/timing evidence, SQLite lineage, and conservative SEL ASCII, SEL Fast Message, Modbus RTU, DNP3, and IEC-101 fingerprints are tested. The C662 is discovered on the appliance, but the first real receive capture remains a commissioning gate. |
 | Passive Bus Sniffer | **In governed source; simulator proven** | Three bounded scope windows, fail-closed safety attestations, cross-window CAN/UART/analog evidence, and compatible-lane recommendations are tested. Real protected-input and Pico acceptance remain commissioning gates. |
-| Session-centered tabs | **Core proven live; expansion source-complete** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Bus Sniffer and Modbus are source-complete and simulator-proven but not claimed deployed until appliance acceptance. |
+| Direct generic OBD | **Read-only hardware path proven; workspace simulator-proven** | The OBDLink SX direct USB path has read ISO 15765-4 supported PIDs, live values, readiness, Modes 03/07/0A, and Mode 09 VIN from a real vehicle. The new OBD tab, schema-v2 records, artifacts, simulator, and guarded API are in governed source but are not claimed deployed until appliance acceptance. Hardware Mode 04 remains disabled because authenticated operator identity is not yet available. |
+| Session-centered tabs | **Core proven live; expansion source-complete** | Overview, Scope, Serial, CAN, Tests, Timeline, and Evidence are deployed. Bus Sniffer, OBD, and Modbus expand the governed source to ten tabs and are simulator-proven but not claimed deployed until appliance acceptance. |
 | Anybus AB7702 Modbus satellite | **Connected satellite; integration simulator-proven** | The gateway is configured and reachable for Modbus TCP/RTU. Bounded interface-selected HICP plus Modbus 43/14 discovery, transaction evidence, and UI are implemented; the first real on-network discovery remains an explicit acceptance gate. |
 | OOB recovery node and field enclosure | **Architecture target** | These remain part of the three-plane appliance design, not a claim that the finished enclosure is commissioned. |
 
@@ -54,6 +55,8 @@ A CAN Decode run derives `frames.jsonl`, `identifiers.csv`, `summary.json`, and 
 
 A Modbus discovery run produces `devices.csv`, `transactions.jsonl`, `scan.json`, PNG/PDF review artifacts, and a checksum manifest. Discovery is constrained to one selected connected RFC1918/link-local interface, at most 254 hosts, four workers by default, one HICP broadcast, and one Modbus 43/14 request per remaining candidate. There are no retries, register reads, or register writes.
 
+An OBD evidence save produces `obd-snapshot.json` plus `manifest.json`, both indexed with size and SHA-256 under the existing session → capture → artifact lineage. The JSON retains provider, adapter, protocol, ECU provenance, raw adapter transcripts, normalized live/DTC/VIN data, and connection generation. Live polling is browser-demanded, serialized, and non-overlapping.
+
 ## Architecture
 
 ```mermaid
@@ -63,6 +66,7 @@ flowchart LR
     Router --> Modbus[Anybus Modbus satellite]
     Modbus --> RTU[RS-485 field device]
     Capture --> Pico[PicoScope 2406B]
+    Capture --> SX[OBDLink SX direct USB]
     Capture --> DB[(Local SQLite metadata index)]
     Capture --> Files[(Filesystem evidence artifacts)]
     OOB[Independent recovery plane] -. health / power-cycle .-> Capture
@@ -79,19 +83,21 @@ See [`docs/architecture.md`](docs/architecture.md) for the full status vocabular
 
 ## Console tour
 
-[Open the interactive console tour](https://dandckr-ops.github.io/remote-dan-lite/console-tour.html) for a GitHub-friendly, self-contained documentation preview of all nine primary workspaces. It uses representative data and supports tab buttons, keyboard navigation, and hash deep links, but it is **not** the live appliance: it makes no appliance API calls and cannot access hardware, start captures, scan networks, or change routing.
+[Open the interactive console tour](https://dandckr-ops.github.io/remote-dan-lite/console-tour.html) for a GitHub-friendly, self-contained documentation preview of all ten primary workspaces. It uses representative data and supports tab buttons, keyboard navigation, and hash deep links, but it is **not** the live appliance: it makes no appliance API calls and cannot access hardware, start captures, scan networks, or change routing.
 
 ## Operator surface
 
 The implemented primary navigation is:
 
-`Overview · Bus Sniffer · Scope · Serial · CAN · Modbus · Tests · Timeline · Evidence`
+`Overview · Bus Sniffer · Scope · Serial · CAN · OBD · Modbus · Tests · Timeline · Evidence`
 
 Connections and System remain secondary setup surfaces. Tabs configure or inspect one synchronized diagnostic session; they do not create separate acquisition implementations.
 
 **Scope** is the configurable physical-signal workspace. It provides General, Secondary ignition pickup, Crankshaft VR, Crankshaft Hall, and Injector primary starting profiles; 40 ms through 10 s windows; four channel enable/label controls; AC/DC coupling; model-proven input ranges; probe scaling; and bounded next-capture auto-range suggestions.
 
 **CAN** owns the fixed commissioned network harness and its VBAT/CAN-H/CAN-L measurements. Its analysis window samples the passive pair at approximately 10 MS/s and reports observed occupancy, nominal bitrate, CAN versus CAN FD header evidence, BRS data rate when resolvable, identifier width, frame activity, physical-layer measurements, and confidence-ranked protocol fingerprints. CAN Decode v1 can also derive complete Classical CAN frame rows and deterministic identifier cadence/change summaries from an existing CAN capture or eligible differential Bus Sniffer run without reacquiring the bus. J1939, NMEA 2000, OBD-II/ISO-TP, and CANopen names require CRC-valid Classical CAN frames plus their identifier/PGN patterns; bitrate or voltage shape alone is never treated as proof. The decode view makes no DBC or OEM signal claim. A Scope capture no longer replaces CAN state, and a CAN capture no longer replaces the latest Scope waveform.
+
+**OBD** is active SAE J1979 request/response diagnostics through a server-configured OBDLink SX stable device path. Hardware v1 is deliberately pinned to the commissioned ISO 15765-4 CAN 11/500 transport; other J1979 transports are not yet claimed. It discovers support bitmaps, retains each ECU responder, reads normalized live values, readiness, stored/pending/permanent DTCs, and Mode 09 VIN, and saves JSON/manifest evidence under a selected diagnostic session. It does not claim enhanced Subaru ABS, SRS, EyeSight, body, coding, actuator, security, or programming coverage. Clear/reset Mode 04 is not exposed to hardware until authenticated operator identity and the complete prepare/commit audit policy are commissioned.
 
 **Bus Sniffer** is a passive electrical-classification gate, not an active discovery tool. It reconciles bounded fast, context, and sparse windows; requires repeatable framing before medium-confidence UART-family claims; fails closed on silence, clipping, periodic-clock lookalikes, and contradictory evidence; and only opens an existing workspace when its physical input lane is actually compatible. RS-485/422, RS-232, TTL, and 12 V single-wire candidates remain blocked until an appropriate receive-only interface is commissioned.
 
@@ -103,9 +109,10 @@ Guided tests such as relative compression and cylinder contribution belong under
 
 ## Evidence database
 
-SQLite schema version 1 records:
+SQLite schema version 2 preserves every schema-v1 row and adds:
 
 - assets/machines
+- normalized customers and vehicle records
 - diagnostic cases
 - sessions
 - captures
@@ -113,6 +120,7 @@ SQLite schema version 1 records:
 - channel configuration
 - event markers
 - structured test results
+- OBD connections, snapshots, DTC rows, live-value rows, and append-only clear audit events
 
 The durable lineage is:
 
@@ -176,6 +184,8 @@ docs/                       Architecture notes and self-contained visual concept
 ## Deployment boundary
 
 `deploy/remote-dan-lite.service` is an example production unit. It runs as the dedicated `remotedan` account, writes evidence under `/var/lib/remote-dan-lite/captures`, and places the SQLite index at `/var/lib/remote-dan-lite/remote-dan.sqlite3`.
+
+For OBD activation, follow [`docs/obd-activation-rollback.md`](docs/obd-activation-rollback.md). Hardware mode requires `REMOTE_DAN_OBD_DEVICE` in the optional root-owned `/etc/remote-dan-lite/environment`; use the exact `/dev/serial/by-id/...` identity. `deploy/99-remote-dan-obdlink-sx.rules` prevents ModemManager from probing that adapter model. The runbook includes online SQLite backup, v1→v2 verification, read-only acceptance, and the mandatory database-first rollback order.
 
 `deploy/rem-01.traefik.yml` is a sanitized private-ingress example. Replace its example hostname, backend, and allowlist. Keep the raw application listener on a private service network rather than exposing port `8776` directly to the public Internet.
 

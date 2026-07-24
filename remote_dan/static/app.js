@@ -13,11 +13,41 @@ const state = {
     inventoryRevision: null,
     routes: {},
   },
+  loadBank: {
+    activeSession: null,
+    applyingOwner: false,
+    available: false,
+    candidates: [],
+    discovering: false,
+    owner: null,
+    starting: false,
+    stopping: false,
+  },
   canDecode: null,
   canComparison: null,
+  obd: {
+    subtab: "live-data",
+    status: null,
+    liveData: null,
+    faults: null,
+    vehicleInfo: null,
+    customers: [],
+    vehicles: [],
+    sessions: [],
+    pollTimer: null,
+    liveRequest: null,
+    statusEpoch: 0,
+    faultsEpoch: 0,
+    vehicleEpoch: 0,
+    savePending: false,
+    saveOperationIds: {},
+  },
 };
 const canDecodeRequestGate = CanRequestGate.createLatestRequestGate();
 const canComparisonRequestGate = CanRequestGate.createLatestRequestGate();
+const obdRecordsRequestGate = CanRequestGate.createLatestRequestGate();
+const obdSessionMutationGate = CanRequestGate.createLatestRequestGate();
+const loadBankStatusRequestGate = CanRequestGate.createLatestRequestGate();
 let canFilterTimer = null;
 
 const tabs = $$('[role="tab"][data-tab]');
@@ -27,18 +57,30 @@ const channelLetters = ["A", "B", "C", "D"];
 
 function activateTab(name, {updateHash = true, focus = false} = {}) {
   const selectedName = tabNames.includes(name) ? name : "overview";
+  let activeTab = null;
   tabs.forEach((tab) => {
     const active = tab.dataset.tab === selectedName;
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
-    if (active && focus) tab.focus();
+    if (active) {
+      activeTab = tab;
+      if (focus) tab.focus();
+    }
   });
   panels.forEach((panel) => {
     panel.hidden = panel.dataset.panel !== selectedName;
   });
+  if (selectedName === "obd") {
+    refreshObdStatus();
+    loadObdRecords();
+    scheduleObdLivePoll();
+  } else {
+    stopObdLivePoll();
+  }
   if (updateHash) {
     history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${selectedName}`);
   }
+  activeTab?.scrollIntoView({block: "nearest", inline: "center", behavior: "auto"});
 }
 
 function bindTabs() {
@@ -106,7 +148,16 @@ function formatRange(value) {
 async function getJson(url, options = {}) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const detail = Array.isArray(payload.detail)
+      ? payload.detail.map((item) => item.msg || JSON.stringify(item)).join("; ")
+      : typeof payload.detail === "object" && payload.detail !== null
+        ? JSON.stringify(payload.detail)
+        : payload.detail;
+    const error = new Error(detail || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -274,6 +325,293 @@ async function loadUsbRouting() {
     updateUsbRoutingControls();
     setUsbRoutingMessage(`USB inventory failed: ${error.message}`, "error");
   }
+}
+
+const loadBankOwnerLabels = {
+  off: "Off",
+  rdl: "Remote Dan Lite",
+  windows: "Windows Workstation",
+};
+
+function selectedLoadBankOwner() {
+  return $('input[name="loadbank-owner"]:checked')?.value || null;
+}
+
+function loadBankOwnerValue(ownership) {
+  if (typeof ownership === "string") return ownership;
+  return ownership?.owner || null;
+}
+
+function updateLoadBankControls() {
+  const loadBank = state.loadBank;
+  const ownsCollection = loadBank.available && state.loadBank.owner === "rdl";
+  const busy = loadBank.discovering || loadBank.starting || loadBank.stopping;
+  const discover = $("#loadbank-discover");
+  const controller = $("#loadbank-controller");
+  const start = $("#loadbank-start");
+  discover.disabled = !ownsCollection || busy;
+  controller.disabled = !ownsCollection || busy || loadBank.candidates.length === 0;
+  start.disabled = !ownsCollection || busy || Boolean(loadBank.activeSession) || !controller.value;
+  $("#loadbank-stop").disabled = !ownsCollection || busy || !loadBank.activeSession;
+  $("#loadbank-owner-form fieldset").disabled = !loadBank.available
+    || loadBank.applyingOwner
+    || Boolean(loadBank.activeSession);
+  const selectedOwner = selectedLoadBankOwner();
+  $("#loadbank-owner-apply").disabled = !loadBank.available
+    || loadBank.applyingOwner
+    || Boolean(loadBank.activeSession)
+    || !selectedOwner
+    || selectedOwner === loadBank.owner;
+
+  const modeMessage = $("#loadbank-mode-message");
+  if (!loadBank.available) {
+    modeMessage.textContent = "Load Bank unavailable. Configure the loopback collector and server-side credential to enable ownership controls.";
+  } else if (loadBank.owner === "windows") {
+    modeMessage.textContent = "RDL polling is disabled. Windows communicates directly over Ethernet.";
+  } else if (loadBank.owner === "rdl") {
+    modeMessage.textContent = "Remote Dan Lite owns collection. Local Auto Detect and session controls are enabled.";
+  } else {
+    modeMessage.textContent = "Collection is Off. Neither Remote Dan Lite nor Windows is authorized to poll the Anybus.";
+  }
+}
+
+function loadBankSnapshotMetric(snapshot, names) {
+  for (const name of names) {
+    if (snapshot?.[name] !== undefined && snapshot[name] !== null) return snapshot[name];
+  }
+  return null;
+}
+
+function renderLoadBankSnapshot(status) {
+  const snapshot = status.latest_snapshot || status.active_session?.latest_snapshot || {};
+  const session = status.active_session || status.recent_sessions?.[0] || {};
+  const captured = loadBankSnapshotMetric(session, ["captured_snapshots", "captured", "captured_count"])
+    ?? loadBankSnapshotMetric(snapshot, ["captured", "captured_count", "sample_count"]);
+  const expected = loadBankSnapshotMetric(session, ["expected_snapshots", "expected", "expected_count"])
+    ?? loadBankSnapshotMetric(snapshot, ["expected", "expected_count", "target_count"]);
+  const qualityValue = loadBankSnapshotMetric(snapshot, ["quality_status", "quality"]);
+  const quality = typeof qualityValue === "object" ? qualityValue?.status : qualityValue;
+  $("#loadbank-captured").textContent = captured === null ? "—" : Number(captured).toLocaleString();
+  $("#loadbank-expected").textContent = expected === null ? "—" : Number(expected).toLocaleString();
+  $("#loadbank-quality").textContent = quality ? String(quality).replaceAll("_", " ").toUpperCase() : "—";
+}
+
+function renderLoadBankSessions(sessions) {
+  const list = $("#loadbank-session-list");
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No load-bank sessions reported.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...sessions.map((session) => {
+    const card = document.createElement("article");
+    card.className = "loadbank-session-card";
+    const identity = document.createElement("div");
+    const title = document.createElement("strong");
+    const detail = document.createElement("small");
+    const metadata = session.metadata || {};
+    title.textContent = metadata.generator || metadata.customer || "Load-bank session";
+    detail.textContent = [
+      metadata.customer,
+      metadata.work_order,
+      metadata.technician,
+      session.state || session.status,
+      session.started_at ? formatTimestamp(session.started_at) : null,
+    ].filter(Boolean).join(" · ");
+    identity.append(title, detail);
+    card.append(identity);
+    const sessionUuid = session.uuid || session.session_uuid || session.id;
+    if (sessionUuid) {
+      const download = document.createElement("a");
+      download.href = `/api/loadbank/sessions/${encodeURIComponent(sessionUuid)}/download`;
+      download.textContent = "Download evidence ZIP";
+      card.append(download);
+    }
+    return card;
+  }));
+}
+
+async function loadLoadBankStatus({quiet = false} = {}) {
+  const generation = loadBankStatusRequestGate.begin();
+  const ownerStatus = $("#loadbank-owner-status");
+  try {
+    const status = await getJson("/api/loadbank/status");
+    if (!loadBankStatusRequestGate.isCurrent(generation)) return false;
+    const previousOwner = state.loadBank.owner;
+    const owner = loadBankOwnerValue(status.ownership);
+    state.loadBank.available = true;
+    state.loadBank.owner = owner;
+    state.loadBank.activeSession = status.active_session || null;
+    if (owner && (previousOwner !== owner || !selectedLoadBankOwner())) {
+      const ownerChoice = $(`input[name="loadbank-owner"][value="${owner}"]`);
+      if (ownerChoice) ownerChoice.checked = true;
+    }
+    ownerStatus.textContent = loadBankOwnerLabels[owner] || "Unknown owner";
+    ownerStatus.className = `status-label ${owner === "rdl" ? "live" : "planned"}`;
+    renderLoadBankSnapshot(status);
+    renderLoadBankSessions(status.recent_sessions || []);
+    updateLoadBankControls();
+    if (!quiet) {
+      setMessage("#loadbank-message", `Collector ready. Current owner: ${loadBankOwnerLabels[owner] || "unknown"}.`, "success");
+    }
+    return true;
+  } catch (error) {
+    if (!loadBankStatusRequestGate.isCurrent(generation)) return false;
+    state.loadBank.available = false;
+    state.loadBank.owner = null;
+    state.loadBank.activeSession = null;
+    ownerStatus.textContent = "Collector unavailable";
+    ownerStatus.className = "status-label error";
+    updateLoadBankControls();
+    if (!quiet) setMessage("#loadbank-message", `Load Bank unavailable: ${error.message}`, "error");
+    return false;
+  }
+}
+
+async function discoverLoadBankControllers() {
+  if (state.loadBank.owner !== "rdl") return;
+  state.loadBank.discovering = true;
+  updateLoadBankControls();
+  setMessage("#loadbank-message", "Running Local RDL Auto Detect…");
+  try {
+    const result = await getJson("/api/loadbank/discovery", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    const controllers = result.controllers || [];
+    state.loadBank.candidates = controllers;
+    const select = $("#loadbank-controller");
+    const options = controllers.map((controller) => {
+      const option = document.createElement("option");
+      option.value = controller.candidate_id;
+      option.textContent = controller.label
+        || controller.name
+        || `${controller.candidate_id} · 192.168.1.99:502 · Unit 125`;
+      return option;
+    });
+    if (!options.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No controller detected";
+      options.push(option);
+    }
+    select.replaceChildren(...options);
+    setMessage(
+      "#loadbank-message",
+      options.length && controllers.length
+        ? `${controllers.length} controller candidate${controllers.length === 1 ? "" : "s"} detected.`
+        : "No controller candidate was detected.",
+      controllers.length ? "success" : "error",
+    );
+  } catch (error) {
+    state.loadBank.candidates = [];
+    setMessage("#loadbank-message", `Load Bank Auto Detect failed: ${error.message}`, "error");
+  } finally {
+    state.loadBank.discovering = false;
+    updateLoadBankControls();
+  }
+}
+
+function bindLoadBankControls() {
+  $$('input[name="loadbank-owner"]').forEach((choice) => {
+    choice.addEventListener("change", updateLoadBankControls);
+  });
+  $("#loadbank-controller").addEventListener("change", updateLoadBankControls);
+  $("#loadbank-discover").addEventListener("click", discoverLoadBankControllers);
+
+  $("#loadbank-owner-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const targetOwner = selectedLoadBankOwner();
+    if (!targetOwner || targetOwner === state.loadBank.owner) return;
+    const summary = `${loadBankOwnerLabels[state.loadBank.owner] || "Unknown"} → ${loadBankOwnerLabels[targetOwner]}`;
+    if (!window.confirm(`Apply Collection Owner change?\n\n${summary}`)) return;
+    const confirmedExternalStopped = state.loadBank.owner === "windows" && targetOwner !== "windows";
+    if (confirmedExternalStopped && !window.confirm(
+      "Confirm the Windows collector is stopped before it relinquishes collection ownership.",
+    )) return;
+    state.loadBank.applyingOwner = true;
+    updateLoadBankControls();
+    try {
+      await getJson("/api/loadbank/ownership", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          owner: targetOwner,
+          confirmed_external_stopped: confirmedExternalStopped,
+        }),
+      });
+      await loadLoadBankStatus({quiet: true});
+      setMessage("#loadbank-message", `Collection Owner changed to ${loadBankOwnerLabels[targetOwner]}.`, "success");
+    } catch (error) {
+      setMessage("#loadbank-message", `Collection Owner change failed: ${error.message}`, "error");
+    } finally {
+      state.loadBank.applyingOwner = false;
+      updateLoadBankControls();
+    }
+  });
+
+  $("#loadbank-session-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (state.loadBank.owner !== "rdl") {
+      setMessage("#loadbank-message", "Remote Dan Lite must own collection before a session can start.", "error");
+      return;
+    }
+    const duration = Number($("#loadbank-duration").value);
+    if (!Number.isInteger(duration) || duration < 15 || duration > 1440 || duration % 15 !== 0) {
+      setMessage("#loadbank-message", "Duration must be 15–1440 minutes in 15-minute increments.", "error");
+      return;
+    }
+    state.loadBank.starting = true;
+    updateLoadBankControls();
+    try {
+      await getJson("/api/loadbank/sessions", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          candidate_id: $("#loadbank-controller").value,
+          duration_minutes: duration,
+          metadata: {
+            customer: $("#loadbank-customer").value.trim(),
+            work_order: $("#loadbank-work-order").value.trim(),
+            generator: $("#loadbank-generator").value.trim(),
+            technician: $("#loadbank-technician").value.trim(),
+          },
+        }),
+      });
+      await loadLoadBankStatus({quiet: true});
+      setMessage("#loadbank-message", "Load-bank collection started.", "success");
+    } catch (error) {
+      setMessage("#loadbank-message", `Load-bank start failed: ${error.message}`, "error");
+    } finally {
+      state.loadBank.starting = false;
+      updateLoadBankControls();
+    }
+  });
+
+  $("#loadbank-stop").addEventListener("click", async () => {
+    if (state.loadBank.owner !== "rdl" || !state.loadBank.activeSession) return;
+    if (!window.confirm("Stop the active load-bank collection?")) return;
+    state.loadBank.stopping = true;
+    updateLoadBankControls();
+    try {
+      await getJson("/api/loadbank/sessions/active/stop", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({}),
+      });
+      await loadLoadBankStatus({quiet: true});
+      setMessage("#loadbank-message", "Load-bank collection stopped; collected evidence remains available.", "success");
+    } catch (error) {
+      setMessage("#loadbank-message", `Load-bank stop failed: ${error.message}`, "error");
+    } finally {
+      state.loadBank.stopping = false;
+      updateLoadBankControls();
+    }
+  });
+  updateLoadBankControls();
 }
 
 function channelControl(letter, name) {
@@ -506,7 +844,7 @@ function bindBusSurveyForm() {
     } else if (!hardwareSafe) {
       setMessage("#sniffer-message", "Hardware capture is blocked until all four electrical-safety attestations are recorded.", "error");
     } else {
-      setMessage("#sniffer-message", mode.value === "hardware" ? "Harness and safety attestations recorded. Survey remains receive-only." : "Simulator selected; no physical signal connection is used.");
+      setMessage("#sniffer-message", "Harness and safety attestations recorded. Survey remains receive-only.");
     }
   };
   harness.addEventListener("change", updateHarnessGate);
@@ -552,6 +890,10 @@ function bindBusSurveyForm() {
 
 function isModbusRun(run) {
   return run?.capture_type === "modbus_scan" || run?.profile === "modbus";
+}
+
+function isObdRun(run) {
+  return run?.capture_type === "obd_scan" || run?.profile === "obd";
 }
 
 function showModbus(run) {
@@ -986,12 +1328,15 @@ function renderCanDecode() {
   const changingOnly = $("#can-changing-only").checked;
   const identifiers = (result.identifiers || []).filter((item) => {
     const matchesText = !filter || String(item.identifier_hex || "").toLowerCase().includes(filter);
-    return matchesText && (!changingOnly || Number(item.payload_state_change_count) > 0);
+    const metrics = CanUiCompat.identifierMetrics(item, result.artifact_schema_version);
+    return matchesText && (!changingOnly || metrics.payloadChangeCount > 0);
   });
   const identifierKey = (item) => `${Number(item.identifier)}:${item.extended ? 1 : 0}`;
   const changingIdentifiers = new Set(
     (result.identifiers || [])
-      .filter((item) => Number(item.payload_state_change_count) > 0)
+      .filter((item) => CanUiCompat.identifierMetrics(
+        item, result.artifact_schema_version,
+      ).payloadChangeCount > 0)
       .map(identifierKey),
   );
   const frames = (result.frames || []).filter((frame) => {
@@ -1006,16 +1351,20 @@ function renderCanDecode() {
     const cadence = Number.isFinite(frequency) && Number.isFinite(period)
       ? `${formatMetric(period, 1)} µs · ${formatMetric(frequency, 1)} Hz`
       : "One frame · cadence unavailable";
-    const jitter = Number.isFinite(Number(item.inter_arrival_stddev_us))
-      ? `${formatMetric(item.inter_arrival_stddev_us, 1)} µs · ${item.interval_count} intervals`
-      : `${Number(item.interval_count || 0)} intervals · spread unavailable`;
+    const metrics = CanUiCompat.identifierMetrics(item, result.artifact_schema_version);
+    const jitter = metrics.intervalSpreadAvailable
+      ? `${formatMetric(item.inter_arrival_stddev_us, 1)} µs · ${metrics.intervalCount} intervals`
+      : `${metrics.intervalCount} intervals · spread unavailable`;
+    const payloadChanges = metrics.payloadChangePercent === null
+      ? `${metrics.payloadChangeCount.toLocaleString()} · percentage unavailable for legacy evidence`
+      : `${metrics.payloadChangeCount.toLocaleString()} · ${formatMetric(metrics.payloadChangePercent, 1)}%`;
     row.append(
       tableCell(item.identifier_hex || "—"),
       tableCell(item.extended ? "Extended" : "Standard"),
       tableCell(Number(item.frame_count || 0).toLocaleString()),
       tableCell(cadence),
       tableCell(jitter),
-      tableCell(`${Number(item.payload_state_change_count || 0).toLocaleString()} · ${formatMetric(item.payload_state_change_percent, 1)}%`),
+      tableCell(payloadChanges),
       tableCell(item.last_payload_hex || "(remote / empty)"),
     );
     return row;
@@ -1250,7 +1599,7 @@ function renderRuns(runs) {
     backend.className = (run.backend || "").includes("simulator") ? "sim" : "hardware";
     backend.textContent = (run.backend || "unknown").toUpperCase();
     const window = document.createElement("span");
-    const sampleUnit = isSerialRun(run) ? "BYTES" : (isModbusRun(run) ? "HOSTS" : "SAMPLES");
+    const sampleUnit = isSerialRun(run) ? "BYTES" : (isModbusRun(run) ? "HOSTS" : (isObdRun(run) ? "OBSERVATIONS" : "SAMPLES"));
     window.textContent = `${(run.profile || "legacy").toUpperCase()} · ${(run.preset || "unknown").toUpperCase()} · ${(run.samples || 0).toLocaleString()} ${sampleUnit}`;
     const links = document.createElement("div");
     links.className = "artifact-links";
@@ -1259,6 +1608,11 @@ function renderRuns(runs) {
         artifactLink(run, "frames.jsonl", "FRAMES"),
         artifactLink(run, "identifiers.csv", "IDENTIFIERS"),
         artifactLink(run, "summary.json", "JSON"),
+      );
+    } else if (isObdRun(run)) {
+      links.append(
+        artifactLink(run, "obd-snapshot.json", "OBD JSON"),
+        artifactLink(run, "manifest.json", "MANIFEST"),
       );
     } else if (isBusSurveyRun(run)) {
       links.append(
@@ -1481,7 +1835,535 @@ function bindModbusScanForm() {
   });
 }
 
+const obdTabs = $$('[role="tab"][data-obd-tab]');
+const obdPanels = $$('[role="tabpanel"][data-obd-panel]');
+const obdTabNames = obdTabs.map((tab) => tab.dataset.obdTab);
+
+function activateObdTab(name, {focus = false} = {}) {
+  const selected = obdTabNames.includes(name) ? name : "live-data";
+  state.obd.subtab = selected;
+  obdTabs.forEach((tab) => {
+    const active = tab.dataset.obdTab === selected;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    if (active && focus) tab.focus();
+  });
+  obdPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.obdPanel !== selected;
+  });
+  if (selected === "live-data") scheduleObdLivePoll();
+  else stopObdLivePoll();
+}
+
+function bindObdTabs() {
+  obdTabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => activateObdTab(tab.dataset.obdTab));
+    tab.addEventListener("keydown", (event) => {
+      let nextIndex = null;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % obdTabs.length;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + obdTabs.length) % obdTabs.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = obdTabs.length - 1;
+      if (nextIndex === null) return;
+      event.preventDefault();
+      activateObdTab(obdTabs[nextIndex].dataset.obdTab, {focus: true});
+    });
+  });
+}
+
+function clearObdReadings(reason = "Disconnected. Previous readings are no longer current.") {
+  state.obd.faultsEpoch += 1;
+  state.obd.vehicleEpoch += 1;
+  state.obd.saveOperationIds = {};
+  state.obd.liveData = null;
+  state.obd.faults = null;
+  state.obd.vehicleInfo = null;
+  const liveEmpty = document.createElement("p");
+  liveEmpty.className = "empty-list";
+  liveEmpty.textContent = "No current live values.";
+  $("#obd-live-list").replaceChildren(liveEmpty);
+  $("#obd-live-updated").textContent = "Last update: —";
+  setMessage("#obd-live-message", reason);
+  $("#obd-confirmed-summary-count").textContent = "—";
+  $("#obd-confirmed-summary-label").textContent = "Not read";
+  $("#obd-fault-summary").classList.remove("alert", "clear", "error");
+  renderDtcList("#obd-stored-list", "#obd-stored-count", "#obd-stored-status", [], "not_read", "No current stored DTC snapshot.");
+  renderDtcList("#obd-pending-list", "#obd-pending-count", "#obd-pending-status", [], "not_read", "No current pending DTC snapshot.");
+  renderDtcList("#obd-permanent-list", "#obd-permanent-count", "#obd-permanent-status", [], "not_read", "No current permanent DTC snapshot.");
+  const readinessEmpty = document.createElement("p");
+  readinessEmpty.className = "empty-list";
+  readinessEmpty.textContent = "No current readiness response.";
+  $("#obd-readiness-list").replaceChildren(readinessEmpty);
+  setMessage("#obd-fault-message", reason);
+  $("#obd-vin").textContent = "—";
+  $("#obd-vin-ecu").textContent = "—";
+  $("#obd-vin-validation").textContent = "Not read";
+  $("#obd-vin-coverage").textContent = "—";
+  $("#obd-vin-result").classList.remove("success", "error");
+  setMessage("#obd-vehicle-message", reason);
+}
+
+function renderObdStatus(status) {
+  state.obd.status = status;
+  const connected = Boolean(status.connected);
+  if (!connected) {
+    stopObdLivePoll();
+    clearObdReadings();
+  }
+  $("#obd-connection-status").textContent = connected ? "Connected" : "Disconnected";
+  $("#obd-connection-status").className = `status-label ${connected ? "live" : "planned"}`;
+  $("#obd-provider").textContent = status.provider || "—";
+  $("#obd-protocol").textContent = status.protocol || "—";
+  $("#obd-ecu-summary").textContent = (status.responder_ids || []).join(", ") || "—";
+  $("#obd-voltage").textContent = Number.isFinite(Number(status.voltage)) ? `${formatMetric(status.voltage, 1)} V` : "—";
+  $("#obd-connect-button").disabled = connected;
+  $("#obd-disconnect-button").disabled = !connected;
+  $("#obd-provider-mode").disabled = connected;
+  $("#obd-session-select").disabled = connected;
+  if (status.session_id) $("#obd-session-select").value = String(status.session_id);
+  const canRead = connected;
+  const canSave = connected && Boolean(status.session_id) && !state.obd.savePending;
+  $("#obd-live-save-button").disabled = !canSave;
+  $("#obd-fault-refresh-button").disabled = !canRead;
+  $("#obd-fault-save-button").disabled = !canSave;
+  $("#obd-vehicle-refresh-button").disabled = !canRead;
+  $("#obd-vehicle-save-button").disabled = !canSave;
+  setMessage("#obd-message", connected
+    ? `${status.adapter_identity || status.provider} · ${status.protocol}`
+    : "Select a session for durable evidence, then connect.", connected ? "success" : "");
+}
+
+async function refreshObdStatus({schedule = true} = {}) {
+  const epoch = ++state.obd.statusEpoch;
+  try {
+    const status = await getJson("/api/obd/status");
+    if (epoch !== state.obd.statusEpoch) return null;
+    renderObdStatus(status);
+    if (schedule) scheduleObdLivePoll();
+    return status;
+  } catch (error) {
+    if (epoch === state.obd.statusEpoch) {
+      setMessage("#obd-message", `OBD status unavailable: ${error.message}`, "error");
+    }
+    return null;
+  }
+}
+
+function renderObdLiveData(payload) {
+  state.obd.liveData = payload;
+  const list = $("#obd-live-list");
+  const values = payload.values || [];
+  if (!values.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No supported live values returned.";
+    list.replaceChildren(empty);
+  } else {
+    list.replaceChildren(...values.map((item) => {
+      const card = document.createElement("article");
+      card.className = `obd-live-card ${item.fresh === false ? "stale" : "fresh"}`;
+      card.setAttribute("role", "listitem");
+      const label = document.createElement("span");
+      const value = document.createElement("strong");
+      const detail = document.createElement("small");
+      label.textContent = `${item.pid} · ${item.name}`;
+      const numeric = Number(item.value);
+      value.textContent = `${Number.isFinite(numeric) ? formatMetric(numeric, Math.abs(numeric) < 10 ? 2 : 1) : "—"} ${item.unit || ""}`.trim();
+      detail.textContent = `${item.ecu || "ECU ?"} · ${item.fresh === false ? "Stale" : "Fresh"}`;
+      card.append(label, value, detail);
+      return card;
+    }));
+  }
+  $("#obd-live-updated").textContent = `Last update: ${formatTimestamp(payload.sampled_at)}`;
+  setMessage("#obd-live-message", payload.errors?.length
+    ? `${values.length} values · ${payload.errors.length} communication/decode errors`
+    : `${values.length} supported values · no reported errors`, payload.errors?.length ? "error" : "success");
+}
+
+function stopObdLivePoll() {
+  if (state.obd.pollTimer !== null) {
+    window.clearTimeout(state.obd.pollTimer);
+    state.obd.pollTimer = null;
+  }
+  if (state.obd.liveRequest) {
+    state.obd.liveRequest.abort();
+    state.obd.liveRequest = null;
+  }
+}
+
+function scheduleObdLivePoll(delayOverride = null) {
+  const topLevelActive = !$("#panel-obd").hidden;
+  if (!topLevelActive || state.obd.subtab !== "live-data" || !state.obd.status?.connected) return;
+  if (state.obd.pollTimer !== null || state.obd.liveRequest) return;
+  const delay = delayOverride ?? (state.obd.liveData ? 1200 : 0);
+  state.obd.pollTimer = window.setTimeout(async () => {
+    state.obd.pollTimer = null;
+    const controller = new AbortController();
+    const epoch = state.obd.statusEpoch;
+    state.obd.liveRequest = controller;
+    let nextDelay = null;
+    try {
+      const payload = await getJson("/api/obd/live", {signal: controller.signal});
+      if (epoch === state.obd.statusEpoch && state.obd.status?.connected) {
+        renderObdLiveData(payload);
+        nextDelay = !(payload.values || []).length && (payload.errors || []).length ? 5000 : 1200;
+      }
+    } catch (error) {
+      if (error.name !== "AbortError" && epoch === state.obd.statusEpoch) {
+        nextDelay = 5000;
+        setMessage("#obd-live-message", `Live read failed: ${error.message}`, "error");
+        const refreshed = await refreshObdStatus({schedule: false});
+        if (refreshed && !refreshed.connected) nextDelay = null;
+      }
+    } finally {
+      if (state.obd.liveRequest === controller) state.obd.liveRequest = null;
+      const recoveryDelay = nextDelay ?? (state.obd.status?.connected ? 1200 : null);
+      if (!controller.signal.aborted && recoveryDelay !== null) scheduleObdLivePoll(recoveryDelay);
+    }
+  }, delay);
+}
+
+function renderDtcList(selector, countSelector, statusSelector, items, status, emptyText) {
+  const hasDefensibleCount = status === "complete" || status === "partial";
+  $(countSelector).textContent = hasDefensibleCount ? String(items.length) : "—";
+  const statusLabel = status === "no_data" ? "Unavailable"
+    : status === "error" ? "Read failed"
+    : status === "partial" ? "Partial read"
+    : status === "complete" ? "Read complete"
+    : "Not read";
+  $(statusSelector).textContent = statusLabel;
+  const list = $(selector);
+  if (!items.length) {
+    const item = document.createElement("li");
+    item.textContent = emptyText;
+    list.replaceChildren(item);
+    return;
+  }
+  list.replaceChildren(...items.map((dtc) => {
+    const item = document.createElement("li");
+    const code = document.createElement("strong");
+    const description = document.createElement("span");
+    const ecu = document.createElement("small");
+    code.textContent = dtc.code;
+    description.textContent = dtc.description || "Description unavailable";
+    ecu.textContent = `Source ${dtc.ecu || "unknown"}`;
+    item.append(code, description, ecu);
+    return item;
+  }));
+}
+
+function renderObdFaults(payload) {
+  state.obd.faults = payload;
+  const summaryNode = $("#obd-fault-summary");
+  const summaryCount = $("#obd-confirmed-summary-count");
+  const summaryLabel = $("#obd-confirmed-summary-label");
+  const storedCount = payload.stored?.length || 0;
+  const hasStoredCount = payload.stored_status === "complete" || payload.stored_status === "partial";
+  summaryCount.textContent = hasStoredCount ? String(storedCount) : "—";
+  summaryNode.classList.remove("alert", "clear", "error");
+  if (payload.stored_status === "complete") {
+    summaryLabel.textContent = `${storedCount} CONFIRMED/STORED EMISSIONS DTC${storedCount === 1 ? "" : "s"}`;
+    summaryNode.classList.add(storedCount ? "alert" : "clear");
+  } else if (payload.stored_status === "partial") {
+    summaryLabel.textContent = `${storedCount} CONFIRMED/STORED EMISSIONS DTC${storedCount === 1 ? "" : "s"} · PARTIAL READ`;
+    summaryNode.classList.add("error");
+  } else {
+    summaryLabel.textContent = payload.stored_status === "no_data" ? "CONFIRMED/STORED DTC COUNT UNAVAILABLE" : "CONFIRMED/STORED DTC READ FAILED";
+    summaryNode.classList.add("error");
+  }
+  window.requestAnimationFrame(() => {
+    summaryCount.focus({preventScroll: true});
+    summaryNode.scrollIntoView({behavior: "smooth", block: "nearest"});
+  });
+  renderDtcList("#obd-stored-list", "#obd-stored-count", "#obd-stored-status", payload.stored || [], payload.stored_status, payload.stored_status === "error" ? "Mode $03 read failed." : payload.stored_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $03." : "ECM returned zero confirmed/stored DTCs.");
+  renderDtcList("#obd-pending-list", "#obd-pending-count", "#obd-pending-status", payload.pending || [], payload.pending_status, payload.pending_status === "error" ? "Mode $07 read failed." : payload.pending_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $07." : "ECM returned zero pending DTCs.");
+  renderDtcList("#obd-permanent-list", "#obd-permanent-count", "#obd-permanent-status", payload.permanent || [], payload.permanent_status, payload.permanent_status === "error" ? "Mode $0A read failed." : payload.permanent_status === "no_data" ? "Unavailable — ECM returned NO DATA for Mode $0A." : "ECM returned zero permanent DTCs.");
+  const readiness = payload.readiness || [];
+  const readinessList = $("#obd-readiness-list");
+  if (!readiness.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No readiness response returned.";
+    readinessList.replaceChildren(empty);
+  } else {
+    readinessList.replaceChildren(...readiness.map((item) => {
+      const card = document.createElement("article");
+      const heading = document.createElement("strong");
+      const detail = document.createElement("span");
+      heading.textContent = `${item.ecu} · MIL ${item.mil_on ? "ON" : "OFF"} · ${item.dtc_count} stored`;
+      detail.textContent = item.incomplete?.length ? `Incomplete: ${item.incomplete.join(", ")}` : "All supported monitors complete";
+      card.append(heading, detail);
+      return card;
+    }));
+  }
+  const states = ["stored", "pending", "permanent"];
+  const failedDtcStates = states.filter((stateName) => ["error", "partial"].includes(payload[`${stateName}_status`]));
+  const unavailableDtcStates = states.filter((stateName) => payload[`${stateName}_status`] === "no_data");
+  const errorCount = (payload.errors || []).length;
+  const readinessStoredCount = readiness.reduce((sum, item) => sum + Number(item.dtc_count || 0), 0);
+  const storedCountMismatch = readiness.length > 0 && payload.stored_status === "complete" && readinessStoredCount !== (payload.stored?.length || 0);
+  const stateLabels = {stored: "confirmed/stored", pending: "pending", permanent: "permanent"};
+  const summaries = states.map((stateName) => {
+    const status = payload[`${stateName}_status`];
+    return status === "complete" || status === "partial"
+      ? `${payload[stateName]?.length || 0} ${stateLabels[stateName]}`
+      : `${stateLabels[stateName]} unavailable`;
+  }).join(" · ");
+  if (storedCountMismatch) {
+    setMessage("#obd-fault-message", `Count mismatch: readiness reports ${readinessStoredCount} stored DTCs but Mode $03 decoded ${payload.stored?.length || 0}. Treat this read as unverified.`, "error");
+  } else if (failedDtcStates.length === 3) {
+    setMessage("#obd-fault-message", "All DTC service reads failed; zero counts are not valid no-code results.", "error");
+  } else if (failedDtcStates.length || errorCount) {
+    setMessage("#obd-fault-message", `${summaries}. ${errorCount} communication/decode errors. Generic emissions only.`, "error");
+  } else if (unavailableDtcStates.length) {
+    const unavailableLabels = unavailableDtcStates.map((stateName) => stateLabels[stateName]).join(" and ");
+    const agreement = readiness.length ? " Mode $03 decoded count agrees with PID $0101." : "";
+    setMessage("#obd-fault-message", `${summaries}. ECM returned NO DATA for ${unavailableLabels} DTC service.${agreement} Generic emissions only.`);
+  } else {
+    const agreement = readiness.length ? " Mode $03 decoded count agrees with PID $0101." : "";
+    setMessage("#obd-fault-message", `${summaries}.${agreement} Generic emissions only. Read at ${formatTimestamp(payload.observed_at)}.`, "success");
+  }
+}
+
+async function readObdFaults() {
+  const epoch = state.obd.statusEpoch;
+  const requestEpoch = ++state.obd.faultsEpoch;
+  try {
+    setMessage("#obd-fault-message", "Reading readiness and stored, pending, and permanent DTCs…");
+    const payload = await getJson("/api/obd/faults");
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.faultsEpoch && state.obd.status?.connected) renderObdFaults(payload);
+  } catch (error) {
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.faultsEpoch) setMessage("#obd-fault-message", `Fault read failed: ${error.message}`, "error");
+  }
+}
+
+function renderObdVehicleInfo(payload) {
+  state.obd.vehicleInfo = payload;
+  const first = payload.vins?.[0];
+  const vinNode = $("#obd-vin");
+  const resultNode = $("#obd-vin-result");
+  vinNode.textContent = first?.vin || "Not reported";
+  $("#obd-vin-ecu").textContent = first?.ecu || "—";
+  $("#obd-vin-validation").textContent = first ? "Valid 17-character Mode $09 VIN" : "Unavailable";
+  $("#obd-vin-coverage").textContent = payload.vins?.length
+    ? `${payload.vins.length} ECM response${payload.vins.length === 1 ? "" : "s"} contained a valid VIN`
+    : "No valid VIN response";
+  const errorCount = (payload.errors || []).length;
+  const successful = payload.vin_status === "complete" && !payload.vin_mismatch;
+  resultNode.classList.toggle("success", successful);
+  resultNode.classList.toggle("error", payload.vin_mismatch || payload.vin_status === "partial" || payload.vin_status === "error");
+  if (payload.vin_mismatch) {
+    setMessage("#obd-vehicle-message", "Warning: different ECUs reported different VINs. No VIN was selected silently.", "error");
+  } else if (payload.vin_status === "partial") {
+    setMessage("#obd-vehicle-message", `VIN decoded from ${first?.ecu || "one ECM"}, but ${errorCount} other Mode $09 response errors make this a partial read.`, "error");
+  } else if (payload.vin_status === "error") {
+    setMessage("#obd-vehicle-message", `VIN read failed with ${errorCount} communication/decode errors.`, "error");
+  } else if (payload.vin_status === "no_data") {
+    setMessage("#obd-vehicle-message", "VIN unavailable: the ECM returned no Mode $09 PID $02 data.");
+  } else {
+    setMessage("#obd-vehicle-message", `VIN READ SUCCESSFULLY · Valid 17-character VIN from ECM response ${first.ecu}.`, "success");
+    window.requestAnimationFrame(() => {
+      vinNode.focus({preventScroll: true});
+      vinNode.scrollIntoView({behavior: "smooth", block: "nearest"});
+    });
+  }
+}
+
+async function readObdVehicleInfo() {
+  const epoch = state.obd.statusEpoch;
+  const requestEpoch = ++state.obd.vehicleEpoch;
+  try {
+    setMessage("#obd-vehicle-message", "Reading Mode $09 PID $02 VIN…");
+    const payload = await getJson("/api/obd/vehicle-info");
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.vehicleEpoch && state.obd.status?.connected) renderObdVehicleInfo(payload);
+  } catch (error) {
+    if (epoch === state.obd.statusEpoch && requestEpoch === state.obd.vehicleEpoch) setMessage("#obd-vehicle-message", `Vehicle-info read failed: ${error.message}`, "error");
+  }
+}
+
+function createOperationId() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  if (typeof cryptoApi?.getRandomValues !== "function") {
+    throw new Error("This browser cannot generate a secure evidence operation ID.");
+  }
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
+async function saveObdSnapshot(kind, label, messageSelector) {
+  if (state.obd.savePending) return;
+  state.obd.savePending = true;
+  if (state.obd.status) renderObdStatus(state.obd.status);
+  try {
+    const operationId = state.obd.saveOperationIds[kind] || createOperationId();
+    state.obd.saveOperationIds[kind] = operationId;
+    const run = await getJson("/api/obd/snapshots", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind, label, operation_id: operationId}),
+    });
+    delete state.obd.saveOperationIds[kind];
+    setMessage(messageSelector, `${run.run_id} saved with hashed JSON and manifest artifacts.`, "success");
+    await refreshRuns();
+    await loadObdRecords();
+  } catch (error) {
+    setMessage(messageSelector, `Evidence save failed: ${error.message}`, "error");
+  } finally {
+    state.obd.savePending = false;
+    if (state.obd.status) renderObdStatus(state.obd.status);
+  }
+}
+
+function option(value, label) {
+  const item = document.createElement("option");
+  item.value = String(value);
+  item.textContent = label;
+  return item;
+}
+
+function renderObdRecords() {
+  const sessionSelect = $("#obd-session-select");
+  const selected = sessionSelect.value || (state.obd.status?.session_id ? String(state.obd.status.session_id) : "");
+  sessionSelect.replaceChildren(option("", "No session selected"), ...state.obd.sessions.map((item) => option(item.session_id, `#${item.session_id} · ${item.vehicle?.display_name || "Unassigned vehicle"} · ${item.customer?.name || "Unassigned customer"}`)));
+  if (selected && state.obd.sessions.some((item) => String(item.session_id) === selected)) sessionSelect.value = selected;
+  $("#obd-session-customer").replaceChildren(option("", "Select customer"), ...state.obd.customers.map((item) => option(item.id, item.company ? `${item.name} · ${item.company}` : item.name)));
+  $("#obd-session-vehicle").replaceChildren(option("", "Select vehicle"), ...state.obd.vehicles.map((item) => option(item.id, item.vin ? `${item.display_name} · ${item.vin}` : item.display_name)));
+  const list = $("#obd-record-list");
+  if (!state.obd.sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No diagnostic sessions stored.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...state.obd.sessions.map((item) => {
+    const card = document.createElement("article");
+    const title = document.createElement("strong");
+    const detail = document.createElement("span");
+    const metadata = document.createElement("small");
+    const use = document.createElement("button");
+    title.textContent = `#${item.session_id} · ${item.case?.title || item.purpose}`;
+    detail.textContent = `${item.customer?.name || "Unassigned"} · ${item.vehicle?.display_name || "Unassigned vehicle"}`;
+    metadata.textContent = `${item.status} · ${formatTimestamp(item.started_at)}`;
+    use.type = "button";
+    use.className = "plain-button";
+    use.textContent = "Select";
+    use.disabled = Boolean(state.obd.status?.connected);
+    use.addEventListener("click", () => {
+      $("#obd-session-select").value = String(item.session_id);
+      setMessage("#obd-record-message", `Session #${item.session_id} selected for the next OBD connection.`, "success");
+    });
+    card.append(title, detail, metadata, use);
+    return card;
+  }));
+}
+
+async function loadObdRecords() {
+  const generation = obdRecordsRequestGate.begin();
+  try {
+    const [customers, vehicles, sessions] = await Promise.all([
+      getJson("/api/customers"), getJson("/api/vehicles"), getJson("/api/diagnostic-sessions"),
+    ]);
+    if (!obdRecordsRequestGate.isCurrent(generation)) return false;
+    state.obd.customers = customers;
+    state.obd.vehicles = vehicles;
+    state.obd.sessions = sessions;
+    renderObdRecords();
+    return true;
+  } catch (error) {
+    if (!obdRecordsRequestGate.isCurrent(generation)) return false;
+    setMessage("#obd-record-message", `Could not load records: ${error.message}`, "error");
+    return false;
+  }
+}
+
+function bindObdControls() {
+  $("#obd-connect-button").addEventListener("click", async () => {
+    const button = $("#obd-connect-button");
+    const epoch = ++state.obd.statusEpoch;
+    button.disabled = true;
+    setMessage("#obd-message", "Connecting and discovering supported PIDs…");
+    try {
+      const sessionValue = $("#obd-session-select").value;
+      const status = await getJson("/api/obd/connect", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode: $("#obd-provider-mode").value, session_id: sessionValue ? Number(sessionValue) : null}),
+      });
+      if (epoch !== state.obd.statusEpoch) return;
+      renderObdStatus(status);
+      scheduleObdLivePoll();
+    } catch (error) {
+      if (epoch === state.obd.statusEpoch) {
+        renderObdStatus({connected: false, responder_ids: []});
+        setMessage("#obd-message", `Connection failed: ${error.message}`, "error");
+        button.disabled = false;
+      }
+    }
+  });
+  $("#obd-disconnect-button").addEventListener("click", async () => {
+    const epoch = ++state.obd.statusEpoch;
+    stopObdLivePoll();
+    try {
+      const status = await getJson("/api/obd/disconnect", {method: "POST"});
+      if (epoch === state.obd.statusEpoch) renderObdStatus(status);
+    } catch (error) {
+      if (epoch === state.obd.statusEpoch) {
+        renderObdStatus({connected: false, responder_ids: []});
+        setMessage("#obd-message", `Disconnected with cleanup error: ${error.message}`, "error");
+      }
+    }
+  });
+  $("#obd-fault-refresh-button").addEventListener("click", readObdFaults);
+  $("#obd-fault-save-button").addEventListener("click", () => saveObdSnapshot("faults", "OBD fault and readiness snapshot", "#obd-fault-message"));
+  $("#obd-vehicle-refresh-button").addEventListener("click", readObdVehicleInfo);
+  $("#obd-vehicle-save-button").addEventListener("click", () => saveObdSnapshot("vehicle_info", "OBD vehicle information", "#obd-vehicle-message"));
+  $("#obd-live-save-button").addEventListener("click", () => saveObdSnapshot("live", "OBD live-data snapshot", "#obd-live-message"));
+  $("#obd-record-refresh-button").addEventListener("click", loadObdRecords);
+
+  $("#obd-customer-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await getJson("/api/customers", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: $("#obd-customer-name").value, company: $("#obd-customer-company").value || null, phone: $("#obd-customer-phone").value || null, email: $("#obd-customer-email").value || null})});
+      event.currentTarget.reset();
+      setMessage("#obd-record-message", "Customer created.", "success");
+      await loadObdRecords();
+    } catch (error) { setMessage("#obd-record-message", `Customer creation failed: ${error.message}`, "error"); }
+  });
+  $("#obd-vehicle-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await getJson("/api/vehicles", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({display_name: $("#obd-vehicle-name").value, vin: $("#obd-vehicle-vin").value || null, make: $("#obd-vehicle-make").value || null, model: $("#obd-vehicle-model").value || null, year: $("#obd-vehicle-year").value ? Number($("#obd-vehicle-year").value) : null})});
+      event.currentTarget.reset();
+      setMessage("#obd-record-message", "Vehicle created.", "success");
+      await loadObdRecords();
+    } catch (error) { setMessage("#obd-record-message", `Vehicle creation failed: ${error.message}`, "error"); }
+  });
+  $("#obd-session-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const generation = obdSessionMutationGate.begin();
+    try {
+      const created = await getJson("/api/diagnostic-sessions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({customer_id: Number($("#obd-session-customer").value), vehicle_id: Number($("#obd-session-vehicle").value), title: $("#obd-session-title").value, purpose: $("#obd-session-purpose").value})});
+      if (!obdSessionMutationGate.isCurrent(generation)) return;
+      const loaded = await loadObdRecords();
+      if (!obdSessionMutationGate.isCurrent(generation) || !loaded) return;
+      $("#obd-session-select").value = String(created.session_id);
+      setMessage("#obd-record-message", `Diagnostic session #${created.session_id} created and selected.`, "success");
+    } catch (error) {
+      if (obdSessionMutationGate.isCurrent(generation)) {
+        setMessage("#obd-record-message", `Session creation failed: ${error.message}`, "error");
+      }
+    }
+  });
+}
+
 bindTabs();
+bindObdTabs();
+bindObdControls();
 bindScopeControls();
 bindScopeCaptureForm();
 bindBusSurveyForm();
@@ -1490,11 +2372,14 @@ bindCanCaptureForm();
 bindCanDecodeForm();
 bindCanComparisonForm();
 bindModbusScanForm();
+bindLoadBankControls();
 $("#usb-routing-apply").addEventListener("click", applyUsbRouting);
 $("#refresh").addEventListener("click", refreshRuns);
 loadScopeProfiles();
 loadModbusNetworks();
 loadUsbRouting();
+loadLoadBankStatus();
 refreshStatus();
 refreshRuns();
 setInterval(refreshStatus, 15_000);
+setInterval(() => loadLoadBankStatus({quiet: true}), 5_000);
