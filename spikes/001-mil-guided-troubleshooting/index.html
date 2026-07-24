@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIL-Aware Guided Troubleshooting · RDL Concept</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="mock-banner">INTERACTIVE CONCEPT · MOCK DATA · NO VEHICLE COMMANDS</div>
+  <div class="shell">
+    <header class="masthead">
+      <div>
+        <p class="kicker">Remote Dan Lite · Diagnostic workflow spike 001</p>
+        <h1>MIL-Aware <span>Guided Troubleshooting</span></h1>
+        <p class="dek">Fault context → bounded OBD evidence → discriminating next test → scope handoff</p>
+      </div>
+      <div class="status-stack">
+        <span class="state-chip ready"><i></i>Mock connection ready</span>
+        <small>2009 Subaru Forester · ECM 7E8</small>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="fault-rail panel" aria-labelledby="fault-heading">
+        <div class="panel-heading"><div><span>01</span><h2 id="fault-heading">Fault context</h2></div><b class="count">3</b></div>
+        <div class="mil-strip"><span>MIL</span><strong>OFF</strong><small>Confirmed codes still retained</small></div>
+        <button class="fault-card selected" type="button" aria-pressed="true" data-fault="P0102">
+          <span class="fault-state">Confirmed · primary workflow</span><strong>P0102</strong><b>MAF circuit low input</b><small>Start with circuit plausibility—not parts replacement.</small>
+        </button>
+        <button class="fault-card related" type="button" aria-pressed="false" data-fault="P0113">
+          <span class="fault-state">Confirmed · related evidence</span><strong>P0113</strong><b>IAT circuit high input</b><small>Shared sensor assembly or connector path may matter.</small>
+        </button>
+        <button class="fault-card" type="button" aria-pressed="false" data-fault="P0028">
+          <span class="fault-state">Confirmed · separate branch</span><strong>P0028</strong><b>Intake valve control range/performance</b><small>Retained, but not mixed into the MAF/IAT workflow.</small>
+        </button>
+        <div class="scope-note"><b>Scope boundary</b><span>Generic emissions data only. This is not a full Subaru module scan.</span></div>
+      </aside>
+
+      <section class="workspace">
+        <section class="panel hero" id="launch-panel">
+          <div class="hero-copy">
+            <span class="eyebrow">Selected playbook · MAF circuit low v0.1</span>
+            <h2>P0102 with related P0113</h2>
+            <p>Because the MAF and IAT signals are associated with one sensor assembly on this vehicle family, two simultaneous circuit faults increase the value of connector, supply, ground, and harness checks before sensor replacement.</p>
+          </div>
+          <dl class="truth-grid">
+            <div><dt>MIL state</dt><dd>Off</dd></div><div><dt>DTC state</dt><dd>Confirmed</dd></div><div><dt>Pending</dt><dd>0</dd></div><div><dt>Readiness</dt><dd>Complete</dd></div>
+          </dl>
+          <div class="history-question"><strong>First discriminating question</strong><p>Was the MAF/IAT connector intentionally unplugged while the ignition was on?</p><div><button type="button" data-history="yes">Yes, it was disturbed</button><button type="button" data-history="no">No / unknown</button></div><small id="history-result">Choose an answer to preserve the test context.</small></div>
+          <button class="primary-action" id="start-guide" type="button">Start guided test</button>
+        </section>
+
+        <section id="guided-workflow" class="guided-workflow" hidden>
+          <nav class="stepper panel" aria-label="Guided test stages">
+            <button type="button" data-step-target="context" aria-current="step"><span>01</span>Context</button>
+            <button type="button" data-step-target="obd"><span>02</span>OBD test</button>
+            <button type="button" data-step-target="interpret"><span>03</span>Interpret</button>
+            <button type="button" data-step-target="scope"><span>04</span>Scope</button>
+            <button type="button" data-step-target="evidence"><span>05</span>Evidence</button>
+          </nav>
+
+          <section class="workflow-step panel" data-step="context">
+            <div class="panel-heading"><div><span>02A</span><h2>Freeze the diagnostic context</h2></div><span class="status-label">Step 1 of 5</span></div>
+            <div class="step-body two-col">
+              <div>
+                <h3>Captured automatically</h3>
+                <ul class="check-list"><li class="done">VIN shape and ECM responder</li><li class="done">MIL, readiness, stored and pending state</li><li class="done">Supported PID map</li><li class="warn">Mode $02 freeze frame · availability not yet proven</li><li class="done">Module voltage and connection generation</li></ul>
+              </div>
+              <div class="reason-card"><span>Why this branch</span><strong>P0102 + P0113</strong><p>Two circuit faults from a combined sensing assembly make shared connector, feed, reference, ground, or harness conditions more useful to test than guessing at two independent failures.</p></div>
+            </div>
+            <div class="step-actions"><button class="secondary-action" type="button" data-step-next="obd">Configure bounded OBD test</button></div>
+          </section>
+
+          <section class="workflow-step panel" data-step="obd" hidden>
+            <div class="panel-heading"><div><span>02B</span><h2>Bounded OBD plausibility test</h2></div><span class="status-label live">Mock stream</span></div>
+            <p class="step-intro">Choose a controlled operating event. The playbook records only the PIDs needed to answer whether airflow, temperature, pressure, and engine state move together.</p>
+            <div class="event-buttons" role="group" aria-label="Operating event">
+              <button id="event-koeo" type="button" data-event="koeo" aria-pressed="true">KOEO</button>
+              <button id="event-idle" type="button" data-event="idle" aria-pressed="false">Warm idle</button>
+              <button id="event-2500" type="button" data-event="rpm2500" aria-pressed="false">2,500 RPM</button>
+              <button id="event-snap" type="button" data-event="snap" aria-pressed="false">Throttle snap</button>
+            </div>
+            <div class="stream-layout">
+              <div class="trend-panel">
+                <div class="trend-heading"><div><span>MAF response trend</span><strong id="event-name">Ignition on · engine off</strong></div><small>Illustrative shape only</small></div>
+                <svg id="trend-chart" viewBox="0 0 640 220" role="img" aria-label="Mock MAF response trend"><g class="grid-lines"><path d="M0 44H640M0 88H640M0 132H640M0 176H640"/><path d="M80 0V220M160 0V220M240 0V220M320 0V220M400 0V220M480 0V220M560 0V220"/></g><polyline id="trend-line" points="0,190 80,189 160,190 240,188 320,189 400,190 480,189 560,190 640,189"/></svg>
+                <p id="event-observation">KOEO establishes whether MAF reports near-zero flow and whether IAT is plausible before the engine starts.</p>
+              </div>
+              <div class="pid-grid" aria-label="Mock OBD values">
+                <article class="pid-card"><span>Engine speed</span><strong id="pid-rpm">0</strong><small>rpm</small></article>
+                <article class="pid-card emphasis"><span>Mass airflow</span><strong id="pid-maf-imperial">0.000</strong><small>lb/min</small><b id="pid-maf-metric">0.00 g/s</b></article>
+                <article class="pid-card"><span>Intake air</span><strong id="pid-iat">68</strong><small>°F</small></article>
+                <article class="pid-card"><span>Manifold pressure</span><strong id="pid-map">14.5</strong><small>psi</small></article>
+                <article class="pid-card"><span>Fuel trim short</span><strong id="pid-stft">0.0</strong><small>%</small></article>
+                <article class="pid-card"><span>Fuel trim long</span><strong id="pid-ltft">4.7</strong><small>%</small></article>
+                <article class="pid-card"><span>Throttle</span><strong id="pid-throttle">17</strong><small>%</small></article>
+                <article class="pid-card"><span>Module voltage</span><strong id="pid-voltage">12.4</strong><small>V</small></article>
+              </div>
+            </div>
+            <div class="step-actions"><button class="secondary-action" type="button" data-step-next="interpret">Interpret captured relationships</button></div>
+          </section>
+
+          <section class="workflow-step panel" data-step="interpret" hidden>
+            <div class="panel-heading"><div><span>02C</span><h2>Interpret the evidence</h2></div><span class="status-label planned">Technician decision</span></div>
+            <div class="interpret-grid">
+              <article><span>Question 1</span><strong>Did reported MAF respond consistently with RPM and load?</strong><div><button type="button" data-decision="maf-plausible">Yes</button><button type="button" data-decision="maf-inconclusive">No / inconclusive</button></div></article>
+              <article><span>Question 2</span><strong>Was IAT plausible relative to ambient and coolant?</strong><div><button type="button" data-decision="iat-plausible">Yes</button><button type="button" data-decision="iat-inconclusive">No / inconclusive</button></div></article>
+              <article class="interpret-result"><span>Current branch</span><strong id="interpret-heading">Awaiting observations</strong><p id="interpret-copy">The mock will not condemn a sensor from a DTC alone. Record the controlled events, then choose the observation that matches the evidence.</p></article>
+            </div>
+            <div class="step-actions"><button class="primary-action compact" id="escalate-scope" type="button">Escalate to scope</button><button class="secondary-action" type="button" data-step-next="evidence">OBD evidence is conclusive</button></div>
+          </section>
+
+          <section class="workflow-step panel" id="scope-handoff" data-step="scope" hidden>
+            <div class="panel-heading"><div><span>02D</span><h2>PicoScope escalation handoff</h2></div><span class="status-label blocked">Pinout blocked</span></div>
+            <div class="scope-warning"><strong>Vehicle-specific pinout required</strong><p>The preset can configure measurement roles, ranges, timebase, and evidence markers. It must not invent connector pins, wire colors, or backprobe locations.</p></div>
+            <div class="scope-channels">
+              <article class="scope-channel channel-a"><b>A</b><div><strong>MAF signal</strong><span>Analog response at the verified test point</span></div><small>0–5 V · 20 ms/div starting preset</small></article>
+              <article class="scope-channel channel-b"><b>B</b><div><strong>Sensor ground</strong><span>Loaded ground offset / voltage drop</span></div><small>±1 V · DC coupled</small></article>
+              <article class="scope-channel channel-c"><b>C</b><div><strong>Sensor supply</strong><span>Feed stability during the failing event</span></div><small>0–20 V · DC coupled</small></article>
+            </div>
+            <div class="scope-actions"><button class="primary-action compact" id="load-scope-preset" type="button">Load scope preset</button><p id="scope-status">Preset not loaded. Wiring instructions remain blocked.</p></div>
+            <div class="step-actions"><button class="secondary-action" type="button" data-step-next="evidence">Review evidence package</button></div>
+          </section>
+
+          <section class="workflow-step panel" data-step="evidence" hidden>
+            <div class="panel-heading"><div><span>02E</span><h2>Diagnostic evidence package</h2></div><span class="status-label live">Draft</span></div>
+            <div class="evidence-layout">
+              <div><h3>Evidence collected</h3><ul id="evidence-list" class="evidence-list"><li>Fault context · P0102/P0113 relationship</li><li>MIL OFF · three confirmed codes</li></ul></div>
+              <div class="finding-card"><span>Current finding</span><strong id="finding-title">Workflow demonstration only</strong><p id="finding-copy">No component conclusion is made from mock values. A real run would retain raw OBD data, scope captures, event markers, technician decisions, and the exact playbook revision.</p></div>
+            </div>
+            <button class="secondary-action full" id="restart-guide" type="button">Restart mock workflow</button>
+          </section>
+        </section>
+      </section>
+    </main>
+    <footer><span>Spike 001 · branch-only concept</span><span>No backend · no serial writes · no customer data</span></footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
