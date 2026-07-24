@@ -197,7 +197,13 @@ def test_child_decode_preserves_source_and_registers_hashed_lineage(tmp_path: Pa
     assert manifest["source_sha256"] == source_sha
     assert manifest["writes_performed"] == 0
     assert manifest["frame_count"] == 3
-    assert manifest["backend"] == "can-decoder-v1"
+    assert manifest["backend"] == "can-decoder-v2"
+    assert manifest["artifact_schema_version"] == 2
+    assert manifest["decoder_algorithm_version"] == 2
+    assert manifest["analyzer_version"] == 2
+    assert "schema_version" not in manifest
+    assert manifest["source_captured_at"] == "2026-07-23T12:00:00+00:00"
+    assert manifest["decoder_settings"]["classical_can_only"] is True
     assert manifest["profile"] == "can-decode"
     assert manifest["preset"] == "500000bps"
     assert manifest["samples"] == 3
@@ -206,6 +212,20 @@ def test_child_decode_preserves_source_and_registers_hashed_lineage(tmp_path: Pa
     assert manifest["identifier_count"] == 2
     assert manifest["rejected_candidate_count"] == 0
     assert manifest["can_polarity"] == "expected"
+    assert manifest["physical_layer_diagnostics"]["capture_duration_us"] > 0
+    assert manifest["physical_layer_diagnostics"]["dominant"]["can_h_v"]["median"] == pytest.approx(3.5)
+    assert manifest["physical_layer_diagnostics"]["recessive"]["can_l_v"]["median"] == pytest.approx(2.5)
+    assert manifest["integrity_diagnostics"]["validated_frame_count"] == 3
+    assert manifest["integrity_diagnostics"]["dlc_distribution"] == {"2": 3}
+    assert manifest["integrity_diagnostics"]["capabilities"] == {
+        "sampled_waveform_analysis_available": True,
+        "scope_acquisition_available": True,
+        "long_listen_only_can_adapter_available": False,
+        "socketcan_or_provider_available": False,
+        "transmit_available": False,
+        "replay_available": False,
+        "query_available": False,
+    }
     child_dir = root / str(manifest["run_id"])
     assert set(manifest["artifacts"]) == {
         "frames.jsonl", "identifiers.csv", "summary.json", "manifest.json",
@@ -216,6 +236,26 @@ def test_child_decode_preserves_source_and_registers_hashed_lineage(tmp_path: Pa
     assert [frame["timestamp_us"] for frame in frames] == sorted(
         frame["timestamp_us"] for frame in frames
     )
+    summary = json.loads((child_dir / "summary.json").read_text())
+    assert summary["physical_layer_diagnostics"] == manifest["physical_layer_diagnostics"]
+    assert summary["integrity_diagnostics"] == manifest["integrity_diagnostics"]
+    identifier_100 = next(item for item in summary["identifiers"] if item["identifier"] == 0x100)
+    assert identifier_100["interval_count"] == 1
+    assert identifier_100["inter_arrival_stddev_us"] is None
+    assert identifier_100["payload_state_change_percent"] == 100.0
+    assert identifier_100["byte_change_counts"] == [0, 1]
+    assert identifier_100["bit_change_counts"] == [
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 1],
+    ]
+    csv_header = (child_dir / "identifiers.csv").read_text().splitlines()[0]
+    for column in (
+        "interval_count", "median_interval_us", "inter_arrival_stddev_us",
+        "payload_state_change_percent", "dlc_transition_count",
+        "rtr_data_transition_count", "introduced_byte_count", "removed_byte_count",
+        "byte_change_counts", "bit_change_counts",
+    ):
+        assert column in csv_header
     saved = database.get_capture(int(manifest["capture_id"]))
     assert saved is not None
     assert saved["capture_type"] == "can_decode"

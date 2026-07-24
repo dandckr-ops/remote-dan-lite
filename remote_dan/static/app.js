@@ -14,8 +14,11 @@ const state = {
     routes: {},
   },
   canDecode: null,
+  canComparison: null,
 };
 const canDecodeRequestGate = CanRequestGate.createLatestRequestGate();
+const canComparisonRequestGate = CanRequestGate.createLatestRequestGate();
+let canFilterTimer = null;
 
 const tabs = $$('[role="tab"][data-tab]');
 const panels = $$('[role="tabpanel"][data-panel]');
@@ -747,23 +750,253 @@ function tableCell(text) {
   return cell;
 }
 
+function renderCanCapabilities(result) {
+  const capabilities = result.capabilities || {};
+  const capabilityText = document.createElement("p");
+  capabilityText.textContent = `Sampled-waveform analysis: ${capabilities.sampled_waveform_analysis_available ? "available" : "unavailable"}. Scope acquisition: ${capabilities.scope_acquisition_available ? "available" : "unavailable"}. Long listen-only CAN adapter: ${capabilities.long_listen_only_can_adapter_available ? "available" : "not commissioned"}. SocketCAN/provider: ${capabilities.socketcan_or_provider_available ? "available" : "absent"}. Transmit/replay/query: ${capabilities.transmit_available || capabilities.replay_available || capabilities.query_available ? "authority present" : "unavailable"}.`;
+  const capabilityHeading = document.createElement("strong");
+  capabilityHeading.textContent = "Capability boundary";
+  $("#can-capability-panel").replaceChildren(capabilityHeading, capabilityText);
+}
+
+function renderCanDiagnostics(result) {
+  renderCanCapabilities(result);
+  if (Number(result.artifact_schema_version) !== 2) {
+    const unavailable = "v2 diagnostics unavailable for legacy evidence";
+    for (const selector of [
+      "#can-capture-duration", "#can-sample-interval", "#can-frame-rate",
+      "#can-occupancy", "#can-ack-summary", "#can-integrity-counts",
+      "#can-dominant-levels", "#can-recessive-levels", "#can-differential-span",
+      "#can-transition-timing",
+    ]) {
+      $(selector).textContent = unavailable;
+    }
+    const badge = document.createElement("span");
+    badge.className = "status-label planned";
+    badge.textContent = `Legacy CAN Decode schema v${result.artifact_schema_version ?? "1"} · CAN Analysis v2 diagnostics unavailable`;
+    $("#can-provenance-badges").replaceChildren(badge);
+    return;
+  }
+  const physical = result.physical_layer_diagnostics || {};
+  const integrity = result.integrity_diagnostics || {};
+  const levelText = (stateLevel) => {
+    const level = stateLevel || {};
+    return `CAN-H ${formatMetric(level.can_h_v?.median, 2)} V · CAN-L ${formatMetric(level.can_l_v?.median, 2)} V · differential ${formatMetric(level.differential_v?.median, 2)} V · common-mode ${formatMetric(level.common_mode_v?.median, 2)} V`;
+  };
+  $("#can-capture-duration").textContent = `${formatMetric(Number(physical.capture_duration_us) / 1000, 3)} ms`;
+  $("#can-sample-interval").textContent = `${formatMetric(physical.sample_interval_us, 3)} µs`;
+  $("#can-frame-rate").textContent = `${formatMetric(integrity.observed_window_frame_rate_hz, 1)} Hz`;
+  $("#can-occupancy").textContent = `${formatMetric(integrity.validated_classical_frame_wire_occupancy_percent, 2)}%`;
+  $("#can-ack-summary").textContent = `${Number(integrity.ack_dominant_count || 0)} / ${Number(integrity.ack_recessive_count || 0)}`;
+  $("#can-integrity-counts").textContent = `${Number(integrity.validated_frame_count || 0)} / ${Number(integrity.rejected_candidate_count || 0)} / ${Number(integrity.unsupported_fd_candidate_count || 0)}`;
+  $("#can-dominant-levels").textContent = levelText(physical.dominant);
+  $("#can-recessive-levels").textContent = levelText(physical.recessive);
+  $("#can-differential-span").textContent = `${formatMetric(physical.differential_span_v, 2)} V sampled differential span`;
+  const timing = physical.transition_timing || {};
+  $("#can-transition-timing").textContent = timing.available
+    ? `${formatMetric(timing.rise_time_us, 3)} µs rise · ${formatMetric(timing.fall_time_us, 3)} µs fall`
+    : `${timing.reason || "Unavailable"} · ${Number(timing.edge_count || 0)} observed state edges`;
+
+  const badges = [];
+  for (const text of [
+    `Artifact schema v${result.artifact_schema_version ?? "?"}`,
+    `Decoder v${result.decoder_algorithm_version ?? "?"}`,
+    `Analyzer v${result.analyzer_version ?? "?"}`,
+    result.source_sha256 ? `Source SHA-256 ${String(result.source_sha256).slice(0, 12)}…` : null,
+    result.source_captured_at ? `Source ${new Date(result.source_captured_at).toISOString()}` : null,
+  ].filter(Boolean)) {
+    const badge = document.createElement("span");
+    badge.className = "status-label live";
+    badge.textContent = text;
+    if (text.startsWith("Source SHA-256")) badge.title = `Source SHA-256 ${result.source_sha256}`;
+    badges.push(badge);
+  }
+  $("#can-provenance-badges").replaceChildren(...badges);
+}
+
+function renderCanTimeline(result) {
+  const advertisedLimit = Math.min(200, Number(result.timeline_limit || 200));
+  const entries = (result.timeline || []).slice(0, advertisedLimit).map((frame) => {
+    const row = document.createElement("div");
+    row.className = "can-timeline-row";
+    row.setAttribute("role", "listitem");
+    const time = document.createElement("span");
+    time.textContent = `${formatMetric(frame.timestamp_us, 1)} µs`;
+    const identifier = document.createElement("strong");
+    identifier.textContent = `${frame.identifier_hex || "—"} · ${frame.extended ? "29-bit" : "11-bit"}`;
+    const payload = document.createElement("code");
+    payload.textContent = frame.payload_hex || "RTR / empty";
+    row.append(time, identifier, payload);
+    return row;
+  });
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.setAttribute("role", "listitem");
+    empty.textContent = "No validated timeline rows match the bounded filter.";
+    entries.push(empty);
+  }
+  $("#can-frame-timeline").replaceChildren(...entries);
+}
+
+function renderCanPayloadHeatmap(result) {
+  const heatmap = result.payload_heatmap || {};
+  const rows = [];
+  const truth = document.createElement("p");
+  truth.className = "can-heatmap-truth";
+  truth.textContent = `${heatmap.returned_identifier_count || 0} of ${heatmap.total_identifier_count || 0} filtered identifiers · ${heatmap.bin_count || 0} one-bit bins · ${heatmap.cell_semantics || "No heatmap evidence"}`;
+  rows.push(truth);
+  const legend = document.createElement("p");
+  legend.className = "can-heat-legend";
+  legend.textContent = "Byte / bit columns B0.7 through B7.0. Every focusable cell shows its comparable flip count; color intensity is secondary.";
+  rows.push(legend);
+  const header = document.createElement("div");
+  header.className = "can-heat-row can-heat-header";
+  const headerLabel = document.createElement("strong");
+  headerLabel.textContent = "Identifier";
+  const headerCells = document.createElement("div");
+  headerCells.className = "can-heat-cells";
+  for (let index = 0; index < 64; index += 1) {
+    const heading = document.createElement("span");
+    heading.textContent = `B${Math.floor(index / 8)}.${7 - (index % 8)}`;
+    headerCells.append(heading);
+  }
+  header.append(headerLabel, headerCells);
+  rows.push(header);
+  const advertisedRows = Math.min(200, Number(heatmap.returned_identifier_count || 200));
+  for (const item of (heatmap.identifiers || []).slice(0, advertisedRows)) {
+    const row = document.createElement("div");
+    row.className = "can-heat-row";
+    const label = document.createElement("strong");
+    label.textContent = `${item.identifier_hex} ${item.format}`;
+    const cells = document.createElement("div");
+    cells.className = "can-heat-cells";
+    (item.cells || []).slice(0, 64).forEach((count, index) => {
+      const cell = document.createElement("span");
+      cell.className = `can-heat-cell heat-${Math.min(4, Number(count || 0))}`;
+      cell.tabIndex = 0;
+      cell.textContent = String(Number(count || 0));
+      const coordinate = `byte ${Math.floor(index / 8)}, bit ${7 - (index % 8)}`;
+      cell.title = `${coordinate}: ${Number(count || 0)} comparable flips`;
+      cell.setAttribute("aria-label", `${item.identifier_hex} ${item.format}, ${coordinate}, ${Number(count || 0)} comparable flips`);
+      cells.append(cell);
+    });
+    row.append(label, cells);
+    rows.push(row);
+  }
+  $("#can-payload-heatmap").replaceChildren(...rows);
+}
+
+function loadCanComparisonOptions() {
+  canComparisonRequestGate.invalidate();
+  const runs = (state.runs || []).filter((run) => isCanDecodeRun(run) && Number(run.artifact_schema_version) === 2);
+  const makeOptions = () => runs.map((run) => {
+    const option = document.createElement("option");
+    option.value = run.run_id;
+    const childTime = run.captured_at ? new Date(run.captured_at).toISOString() : "unknown child time";
+    const sourceHash = run.source_sha256 ? ` · source SHA-256 ${String(run.source_sha256).slice(0, 12)}…` : "";
+    option.textContent = `${run.label || "CAN Decode"} · child run ${run.run_id} · ${childTime}${sourceHash}`;
+    return option;
+  });
+  const baseline = $("#can-compare-baseline");
+  const candidate = $("#can-compare-candidate");
+  baseline.replaceChildren(...makeOptions());
+  candidate.replaceChildren(...makeOptions());
+  if (runs.length > 1) {
+    baseline.value = runs[1].run_id;
+    candidate.value = runs[0].run_id;
+  }
+  resetCanComparison();
+  $("#can-compare-button").disabled = runs.length < 2 || baseline.value === candidate.value;
+}
+
+function renderCanComparison(comparison) {
+  const rows = [];
+  const summary = document.createElement("p");
+  const truncated = comparison.identifier_deltas_truncated
+    ? ` Showing ${comparison.identifier_delta_returned_count || 0} bounded deltas.`
+    : "";
+  summary.textContent = `${comparison.common_identifier_total_count || 0} common · ${comparison.observed_only_in_baseline_total_count || 0} observed only in baseline · ${comparison.observed_only_in_candidate_total_count || 0} observed only in candidate.${truncated}${comparison.same_source_warning ? ` ${comparison.same_source_warning}` : ""}`;
+  rows.push(summary);
+  for (const delta of comparison.identifier_deltas || []) {
+    const row = document.createElement("div");
+    row.className = "can-comparison-row";
+    const label = document.createElement("strong");
+    label.textContent = `${delta.identifier_hex} ${delta.extended ? "29-bit" : "11-bit"}`;
+    const detail = document.createElement("span");
+    detail.textContent = `Observed-window rate Δ ${formatMetric(delta.observed_window_rate_hz_delta, 1)} Hz · mean period Δ ${formatMetric(delta.mean_period_us_delta, 1)} µs · payload-state change Δ ${formatMetric(delta.payload_state_change_percent_delta, 1)} points`;
+    row.append(label, detail);
+    rows.push(row);
+  }
+  $("#can-compare-results").replaceChildren(...rows);
+  const baseline = comparison.provenance?.baseline || {};
+  const candidate = comparison.provenance?.candidate || {};
+  $("#can-comparison-provenance").textContent = `Authoritative child chains verified · baseline ${baseline.run_id || "unknown"} · candidate ${candidate.run_id || "unknown"}`;
+  $("#can-comparison-provenance").className = "status-label live";
+}
+
+function resetCanComparison(message = "Select two distinct immutable CAN Decode v2 children.") {
+  state.canComparison = null;
+  $("#can-compare-results").replaceChildren();
+  $("#can-comparison-provenance").textContent = "No comparison loaded";
+  $("#can-comparison-provenance").className = "status-label planned";
+  setMessage("#can-compare-message", message);
+}
+
+function bindCanComparisonForm() {
+  const baseline = $("#can-compare-baseline");
+  const candidate = $("#can-compare-candidate");
+  const syncButton = () => {
+    $("#can-compare-button").disabled = !baseline.value || !candidate.value || baseline.value === candidate.value;
+  };
+  const update = () => {
+    canComparisonRequestGate.invalidate();
+    resetCanComparison();
+    syncButton();
+  };
+  baseline.addEventListener("change", update);
+  candidate.addEventListener("change", update);
+  $("#can-compare-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const generation = canComparisonRequestGate.begin();
+    const query = new URLSearchParams({baseline_run_id: baseline.value, candidate_run_id: candidate.value});
+    $("#can-compare-button").disabled = true;
+    setMessage("#can-compare-message", "Comparing two authoritative immutable children…");
+    try {
+      const comparison = await getJson(`/api/can-decode-comparisons?${query.toString()}`);
+      if (!canComparisonRequestGate.isCurrent(generation)) return;
+      state.canComparison = comparison;
+      renderCanComparison(comparison);
+      setMessage("#can-compare-message", "Comparison complete. Counts and rates remain qualified by each observed window.", "success");
+    } catch (error) {
+      if (!canComparisonRequestGate.isCurrent(generation)) return;
+      setMessage("#can-compare-message", `CAN comparison failed: ${error.message}`, "error");
+    } finally {
+      if (canComparisonRequestGate.isCurrent(generation)) syncButton();
+    }
+  });
+}
+
 function renderCanDecode() {
   const result = state.canDecode;
   if (!result) return;
+  renderCanDiagnostics(result);
+  renderCanTimeline(result);
+  renderCanPayloadHeatmap(result);
   const filter = $("#can-identifier-filter").value.trim().toLowerCase();
   const changingOnly = $("#can-changing-only").checked;
   const identifiers = (result.identifiers || []).filter((item) => {
     const matchesText = !filter || String(item.identifier_hex || "").toLowerCase().includes(filter);
-    return matchesText && (!changingOnly || Number(item.payload_change_count) > 0);
+    return matchesText && (!changingOnly || Number(item.payload_state_change_count) > 0);
   });
+  const identifierKey = (item) => `${Number(item.identifier)}:${item.extended ? 1 : 0}`;
   const changingIdentifiers = new Set(
     (result.identifiers || [])
-      .filter((item) => Number(item.payload_change_count) > 0)
-      .map((item) => Number(item.identifier)),
+      .filter((item) => Number(item.payload_state_change_count) > 0)
+      .map(identifierKey),
   );
   const frames = (result.frames || []).filter((frame) => {
     const matchesText = !filter || String(frame.identifier_hex || "").toLowerCase().includes(filter);
-    return matchesText && (!changingOnly || changingIdentifiers.has(Number(frame.identifier)));
+    return matchesText && (!changingOnly || changingIdentifiers.has(identifierKey(frame)));
   });
 
   const identifierRows = identifiers.map((item) => {
@@ -773,12 +1006,16 @@ function renderCanDecode() {
     const cadence = Number.isFinite(frequency) && Number.isFinite(period)
       ? `${formatMetric(period, 1)} µs · ${formatMetric(frequency, 1)} Hz`
       : "One frame · cadence unavailable";
+    const jitter = Number.isFinite(Number(item.inter_arrival_stddev_us))
+      ? `${formatMetric(item.inter_arrival_stddev_us, 1)} µs · ${item.interval_count} intervals`
+      : `${Number(item.interval_count || 0)} intervals · spread unavailable`;
     row.append(
       tableCell(item.identifier_hex || "—"),
       tableCell(item.extended ? "Extended" : "Standard"),
       tableCell(Number(item.frame_count || 0).toLocaleString()),
       tableCell(cadence),
-      tableCell(Number(item.payload_change_count || 0).toLocaleString()),
+      tableCell(jitter),
+      tableCell(`${Number(item.payload_state_change_count || 0).toLocaleString()} · ${formatMetric(item.payload_state_change_percent, 1)}%`),
       tableCell(item.last_payload_hex || "(remote / empty)"),
     );
     return row;
@@ -786,7 +1023,7 @@ function renderCanDecode() {
   if (!identifierRows.length) {
     const row = document.createElement("tr");
     const cell = tableCell("No identifiers match the current bounded filter.");
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     row.append(cell);
     identifierRows.push(row);
   }
@@ -923,7 +1160,11 @@ function bindCanDecodeForm() {
     }
   });
   $("#can-identifier-filter").addEventListener("input", () => {
-    if (state.canDecode?.run_id) loadCanDecodeResult(state.canDecode.run_id);
+    window.clearTimeout(canFilterTimer);
+    canDecodeRequestGate.invalidate();
+    canFilterTimer = window.setTimeout(() => {
+      if (state.canDecode?.run_id) loadCanDecodeResult(state.canDecode.run_id);
+    }, 250);
   });
   $("#can-changing-only").addEventListener("change", () => {
     if (state.canDecode?.run_id) loadCanDecodeResult(state.canDecode.run_id);
@@ -1095,6 +1336,7 @@ async function refreshRuns() {
     showNetwork(runs.find(isNetworkRun));
     showScope(runs.find(isScopeRun));
     await loadCanDecodeSources();
+    loadCanComparisonOptions();
     const latestDecode = runs.find(isCanDecodeRun);
     if (latestDecode && state.canDecode?.run_id !== latestDecode.run_id) {
       await loadCanDecodeResult(latestDecode.run_id);
@@ -1246,6 +1488,7 @@ bindBusSurveyForm();
 bindSerialCaptureForm();
 bindCanCaptureForm();
 bindCanDecodeForm();
+bindCanComparisonForm();
 bindModbusScanForm();
 $("#usb-routing-apply").addEventListener("click", applyUsbRouting);
 $("#refresh").addEventListener("click", refreshRuns);

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=can-decode-v1">
+  <link rel="stylesheet" href="/static/app.css?v=can-analysis-v2">
 </head>
 <body>
   <div class="shell">
@@ -348,9 +348,49 @@
           <div class="message" id="can-decode-message" aria-live="polite">Select an existing immutable capture. Decoding creates separate child evidence and performs 0 bus writes.</div>
           <p class="can-decode-limitation">This is generic Classical CAN decoding only; no DBC or OEM signal meaning is inferred. CAN FD payloads, ISO-TP, UDS, VINs, and PIDs are not decoded.</p>
         </section>
+        <section class="panel can-v2-diagnostics" id="can-diagnostic-summary" aria-labelledby="can-v2-heading">
+          <div class="panel-heading">
+            <div><span class="section-number">04D</span><h2 id="can-v2-heading">CAN Analysis v2 diagnostics</h2></div>
+            <div id="can-provenance-badges" class="can-provenance-badges" aria-label="Interpretation provenance"><span class="status-label planned">No evidence</span></div>
+          </div>
+          <div class="can-diagnostic-grid">
+            <article class="analysis-metric"><span>Capture duration</span><strong id="can-capture-duration">—</strong><small>Explicit sampled evidence window</small></article>
+            <article class="analysis-metric"><span>Sample interval</span><strong id="can-sample-interval">—</strong><small>Source waveform resolution</small></article>
+            <article class="analysis-metric"><span>Validated frame rate</span><strong id="can-frame-rate">—</strong><small>Frames / second over capture duration</small></article>
+            <article class="analysis-metric"><span>Bus occupancy</span><strong id="can-occupancy">—</strong><small>Occupied validated frame intervals</small></article>
+            <article class="analysis-metric"><span>ACK slots</span><strong id="can-ack-summary">—</strong><small>Dominant / recessive observations</small></article>
+            <article class="analysis-metric"><span>Integrity counts</span><strong id="can-integrity-counts">—</strong><small>Validated / rejected / unsupported FD</small></article>
+          </div>
+          <div class="can-level-grid">
+            <article><h3>Dominant sampled state</h3><p id="can-dominant-levels">CAN-H — · CAN-L — · differential — · common-mode —</p></article>
+            <article><h3>Recessive sampled state</h3><p id="can-recessive-levels">CAN-H — · CAN-L — · differential — · common-mode —</p></article>
+            <article><h3>Differential span</h3><p id="can-differential-span">—</p></article>
+            <article><h3>Transition support</h3><p id="can-transition-timing">—</p></article>
+          </div>
+          <aside class="can-capability-panel" id="can-capability-panel" aria-label="CAN analysis capability boundary">
+            <strong>Capability boundary</strong>
+            <p>Long listen-only traffic capture is NOT commissioned. No SocketCAN or local CAN provider exists. Analysis is limited to bounded existing sampled CAN-H/CAN-L evidence. No resistance or bus-health claim is made.</p>
+          </aside>
+        </section>
+        <section class="panel can-v2-visuals" aria-labelledby="can-timeline-heading">
+          <div class="panel-heading"><div><span class="section-number">04E</span><h2 id="can-timeline-heading">Bounded frame timeline</h2></div><span class="status-label planned">Maximum 200 rows</span></div>
+          <div id="can-frame-timeline" class="can-frame-timeline" role="list" aria-label="CAN frame timeline"><div role="listitem">No validated timeline loaded.</div></div>
+          <div class="panel-heading can-frame-heading"><div><span class="section-number">04F</span><h2>Payload byte / bit change heatmap</h2></div></div>
+          <div id="can-payload-heatmap" class="can-payload-heatmap" role="region" aria-label="Payload change heatmap"><p>No payload-change matrix loaded.</p></div>
+        </section>
+        <section class="panel can-comparison-panel" aria-labelledby="can-compare-heading">
+          <div class="panel-heading"><div><span class="section-number">04G</span><h2 id="can-compare-heading">Immutable baseline comparison</h2></div><span id="can-comparison-provenance" class="status-label planned">Authoritative children only</span></div>
+          <form id="can-compare-form" class="can-compare-form">
+            <label class="field"><span>Baseline CAN decode</span><select id="can-compare-baseline" required><option value="">No completed decode</option></select></label>
+            <label class="field"><span>Candidate CAN decode</span><select id="can-compare-candidate" required><option value="">No completed decode</option></select></label>
+            <button class="capture-button" id="can-compare-button" type="submit" disabled><span class="button-mark"></span>Compare immutable evidence</button>
+          </form>
+          <div class="message" id="can-compare-message" aria-live="polite">Choose two different complete authoritative CAN Analysis v2 children.</div>
+          <div id="can-compare-results" class="can-comparison-results" aria-live="polite"><p>No comparison loaded.</p></div>
+        </section>
         <section class="panel can-decode-results" aria-labelledby="can-identifier-heading">
           <div class="panel-heading">
-            <div><span class="section-number">04D</span><h2 id="can-identifier-heading">Identifier inventory</h2></div>
+            <div><span class="section-number">04H</span><h2 id="can-identifier-heading">Identifier inventory</h2></div>
             <div class="can-decode-artifacts"><a id="can-frames-artifact" class="text-link hidden" href="#">Frame JSONL</a><a id="can-identifiers-artifact" class="text-link hidden" href="#">Identifier CSV</a></div>
           </div>
           <div class="can-decode-filters">
@@ -361,11 +401,11 @@
           <div class="can-decode-table-scroll">
             <table id="can-identifier-table" class="can-decode-table">
               <caption>Bounded identifier inventory from validated Classical CAN frames</caption>
-              <thead><tr><th scope="col">ID</th><th scope="col">Format</th><th scope="col">Count</th><th scope="col">Cadence / frequency</th><th scope="col">Payload changes</th><th scope="col">Last payload</th></tr></thead>
-              <tbody id="can-identifier-rows"><tr><td colspan="6">No identifiers loaded.</td></tr></tbody>
+              <thead><tr><th scope="col">ID</th><th scope="col">Format</th><th scope="col">Count</th><th scope="col">Cadence / frequency</th><th scope="col">Interval jitter</th><th scope="col">Payload changes</th><th scope="col">Last payload</th></tr></thead>
+              <tbody id="can-identifier-rows"><tr><td colspan="7">No identifiers loaded.</td></tr></tbody>
             </table>
           </div>
-          <div class="panel-heading can-frame-heading"><div><span class="section-number">04E</span><h2>Validated frames</h2></div></div>
+          <div class="panel-heading can-frame-heading"><div><span class="section-number">04I</span><h2>Validated frames</h2></div></div>
           <div class="can-decode-table-scroll">
             <table id="can-frame-table" class="can-decode-table">
               <caption>Bounded CRC-valid Classical CAN frame rows</caption>
@@ -427,7 +467,7 @@
 
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
-  <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=can-decode-v1-remediation2" defer></script>
+  <script src="/static/can_request_gate.js?v=can-analysis-v2" defer></script>
+  <script src="/static/app.js?v=can-analysis-v2" defer></script>
 </body>
 </html>

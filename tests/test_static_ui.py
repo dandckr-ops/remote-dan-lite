@@ -362,4 +362,70 @@ def test_can_tab_exposes_accessible_bounded_existing_capture_decode_contract() -
     assert "overflow-x: auto" in styles
     assert "@media (max-width: 620px)" in styles
     assert "max-width: 100%" in styles
-    assert "can-decode-v1" in index
+    assert "can-analysis-v2" in index
+
+
+def test_can_analysis_v2_ui_exposes_diagnostics_heatmap_timeline_and_comparison_safely() -> None:
+    parser = parse_console()
+    required_ids = {
+        "can-diagnostic-summary", "can-capture-duration", "can-sample-interval",
+        "can-frame-rate", "can-occupancy", "can-ack-summary", "can-integrity-counts",
+        "can-dominant-levels", "can-recessive-levels", "can-differential-span",
+        "can-transition-timing", "can-provenance-badges", "can-capability-panel",
+        "can-frame-timeline", "can-payload-heatmap", "can-compare-form",
+        "can-compare-baseline", "can-compare-candidate", "can-compare-button",
+        "can-compare-message", "can-compare-results", "can-comparison-provenance",
+    }
+    assert required_ids <= parser.ids
+
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    can_markup = index.split('id="panel-can"', 1)[1].split('id="panel-modbus"', 1)[0]
+    assert "CAN Analysis v2" in can_markup
+    assert "Dominant sampled state" in can_markup
+    assert "Recessive sampled state" in can_markup
+    assert "Occupied validated frame intervals" in can_markup
+    assert "Interval jitter" in can_markup
+    assert "Payload byte / bit change heatmap" in can_markup
+    assert "Long listen-only traffic capture is NOT commissioned" in can_markup
+    assert "No SocketCAN or local CAN provider exists" in can_markup
+    assert "No resistance or bus-health claim" in can_markup
+    assert 'aria-live="polite"' in can_markup
+    assert 'aria-label="CAN frame timeline"' in can_markup
+    assert can_markup.count("Capture network") == 1
+
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    for unsafe_api in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        assert unsafe_api not in script
+    for function in (
+        "renderCanDiagnostics", "renderCanTimeline", "renderCanPayloadHeatmap",
+        "loadCanComparisonOptions", "renderCanComparison", "bindCanComparisonForm",
+    ):
+        assert f"function {function}" in script
+    assert "canComparisonRequestGate" in script
+    assert 'getJson(`/api/can-decode-comparisons?' in script
+    assert "inter_arrival_stddev_us" in script
+    assert "payload_state_change_percent" in script
+    assert "payload_heatmap" in script
+    assert "textContent" in script
+    assert "bindCanComparisonForm();" in script
+    assert "v2 diagnostics unavailable for legacy evidence" in script
+    assert "resetCanComparison" in script
+    comparison_loader = script.split("function loadCanComparisonOptions()", 1)[1].split(
+        "function renderCanComparison", 1
+    )[0]
+    assert "canComparisonRequestGate.invalidate();" in comparison_loader
+    assert "child run" in script
+    assert "SHA-256" in script
+    assert "identifier_deltas_truncated" in script
+    assert 'cell.tabIndex = 0' in script
+    assert "Byte / bit" in script
+
+    styles = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+    assert ".can-heat-legend" in styles
+    for selector in (
+        ".can-diagnostic-grid", ".can-level-grid", ".can-frame-timeline",
+        ".can-payload-heatmap", ".can-heat-cell", ".can-comparison-results",
+    ):
+        assert selector in styles
+    assert "overflow-x: auto" in styles
+    assert "@media (max-width: 620px)" in styles

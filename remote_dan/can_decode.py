@@ -18,10 +18,16 @@ from typing import Any
 
 import numpy as np
 
-from remote_dan.can_analysis import aggregate_can_identifiers, decode_can_waveform
+from remote_dan.can_analysis import (
+    aggregate_can_identifiers,
+    build_can_diagnostics,
+    decode_can_waveform,
+)
 from remote_dan.database import EvidenceDatabase
 
-DECODER_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
+DECODER_ALGORITHM_VERSION = 2
+ANALYZER_VERSION = 2
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_SOURCE_SAMPLES = 1_000_000
 MAX_SAMPLE_INTERVAL_US = 0.25
@@ -35,6 +41,7 @@ LIMITATIONS = [
     "Generic Classical CAN frame decoding only.",
     "No DBC, OEM signal meaning, PID interpretation, VIN extraction, ISO-TP, UDS, or CAN FD payload decoding.",
     "Passive source inspection only; no CAN writes, ACK generation, replay, stimulation, or queries are implemented.",
+    "Long listen-only traffic capture is not commissioned; no SocketCAN or local CAN provider exists.",
 ]
 
 
@@ -294,6 +301,12 @@ class CanDecodeManager:
             raise ValueError("source manifest is missing or malformed") from exc
         if source_manifest.get("run_id") != request.source_run_id:
             raise ValueError("source manifest run ID does not match its directory")
+        source_captured_at = source_record.get("captured_at")
+        if (
+            not isinstance(source_captured_at, str)
+            or source_manifest.get("captured_at") != source_captured_at
+        ):
+            raise ValueError("source acquisition time does not match authoritative SQLite")
 
         capture_type = source_manifest.get("capture_type")
         profile = source_manifest.get("profile")
@@ -363,11 +376,12 @@ class CanDecodeManager:
         if not frames:
             raise ValueError("source contains no validated Classical CAN frames")
         identifiers = aggregate_can_identifiers(frames)
+        diagnostics = build_can_diagnostics(time_us, can_h, can_l, decoded)
 
         captured_at = datetime.now(UTC)
         sample_interval_us = float(np.median(np.diff(time_us)))
         duration_ms = float((time_us[-1] - time_us[0]) / 1000.0)
-        backend = f"can-decoder-v{DECODER_VERSION}"
+        backend = f"can-decoder-v{DECODER_ALGORITHM_VERSION}"
         preset = f"{decoded['nominal_bitrate_bps']}bps"
         run_id = (
             captured_at.strftime("%Y%m%dT%H%M%S%fZ")
@@ -378,13 +392,15 @@ class CanDecodeManager:
         capture_id: int | None = None
         source_capture_id = source_record["id"]
         settings = {
-            "decoder_version": DECODER_VERSION,
             "classical_can_only": True,
             "max_source_bytes": MAX_SOURCE_BYTES,
             "max_source_samples": MAX_SOURCE_SAMPLES,
             "max_sample_interval_us": MAX_SAMPLE_INTERVAL_US,
         }
         common: dict[str, Any] = {
+            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+            "decoder_algorithm_version": DECODER_ALGORITHM_VERSION,
+            "analyzer_version": ANALYZER_VERSION,
             "run_id": run_id,
             "captured_at": captured_at.isoformat(),
             "label": label,
@@ -396,6 +412,7 @@ class CanDecodeManager:
             "sample_interval_us": sample_interval_us,
             "duration_ms": duration_ms,
             "source_run_id": request.source_run_id,
+            "source_captured_at": source_captured_at,
             "parent_run_id": request.source_run_id,
             "source_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
             "parent_capture_id": source_capture_id if isinstance(source_capture_id, int) else None,
@@ -406,7 +423,7 @@ class CanDecodeManager:
             "source_artifact": source_artifact,
             "source_sha256": source_sha256,
             "source_manifest_sha256": source_manifest_sha256,
-            "decoder": settings,
+            "decoder_settings": settings,
             "can_polarity": decoded["polarity"],
             "nominal_bitrate_bps": decoded["nominal_bitrate_bps"],
             "frame_count": len(frames),
@@ -418,6 +435,7 @@ class CanDecodeManager:
             "writes_performed": 0,
             "warnings": list(decoded["warnings"]),
             "limitations": LIMITATIONS,
+            **diagnostics,
         }
         try:
             if self.database is not None:
@@ -566,32 +584,62 @@ class CanDecodeManager:
                 handle.write(json.dumps(frame, sort_keys=True, separators=(",", ":")) + "\n")
 
     @staticmethod
-    def _write_identifiers(path: Path, identifiers: list[dict[str, Any]]) -> None:
+    def _render_identifiers_csv(identifiers: list[dict[str, Any]]) -> str:
         columns = [
             "identifier", "identifier_hex", "format", "frame_count",
             "first_timestamp_us", "last_timestamp_us", "observed_duration_us",
-            "mean_period_us", "mean_frequency_hz", "min_interval_us",
-            "max_interval_us", "payload_change_count", "last_payload_hex",
-            "byte_change_counts",
+            "interval_count", "mean_period_us", "mean_frequency_hz", "min_interval_us",
+            "median_interval_us", "max_interval_us", "inter_arrival_stddev_us",
+            "inter_arrival_stddev_measure", "payload_state_transition_count",
+            "payload_state_change_count", "payload_state_change_percent",
+            "dlc_transition_count", "rtr_data_transition_count",
+            "comparable_payload_transition_count", "comparable_payload_change_count",
+            "introduced_byte_count", "removed_byte_count", "last_payload_hex",
+            "byte_change_counts", "bit_change_counts",
         ]
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, lineterminator="\n")
-            writer.writeheader()
-            for item in identifiers:
-                row = {
-                    "identifier": item["identifier"],
-                    "identifier_hex": item["identifier_hex"],
-                    "format": "extended" if item["extended"] else "standard",
-                    "frame_count": item["frame_count"],
-                    "first_timestamp_us": item["first_timestamp_us"],
-                    "last_timestamp_us": item["last_timestamp_us"],
-                    "observed_duration_us": item["observed_duration_us"],
-                    "mean_period_us": item["mean_period_us"],
-                    "mean_frequency_hz": item["mean_frequency_hz"],
-                    "min_interval_us": item["min_interval_us"],
-                    "max_interval_us": item["max_interval_us"],
-                    "payload_change_count": item["payload_change_count"],
-                    "last_payload_hex": item["last_payload_hex"],
-                    "byte_change_counts": ";".join(str(value) for value in item["byte_change_counts"]),
-                }
-                writer.writerow({key: _spreadsheet_safe(value) for key, value in row.items()})
+        output = io.StringIO(newline="")
+        writer = csv.DictWriter(output, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        for item in identifiers:
+            row = {
+                "identifier": item["identifier"],
+                "identifier_hex": item["identifier_hex"],
+                "format": "extended" if item["extended"] else "standard",
+                "frame_count": item["frame_count"],
+                "first_timestamp_us": item["first_timestamp_us"],
+                "last_timestamp_us": item["last_timestamp_us"],
+                "observed_duration_us": item["observed_duration_us"],
+                "interval_count": item["interval_count"],
+                "mean_period_us": item["mean_period_us"],
+                "mean_frequency_hz": item["mean_frequency_hz"],
+                "min_interval_us": item["min_interval_us"],
+                "median_interval_us": item["median_interval_us"],
+                "max_interval_us": item["max_interval_us"],
+                "inter_arrival_stddev_us": item["inter_arrival_stddev_us"],
+                "inter_arrival_stddev_measure": item["inter_arrival_stddev_measure"],
+                "payload_state_transition_count": item["payload_state_transition_count"],
+                "payload_state_change_count": item["payload_state_change_count"],
+                "payload_state_change_percent": item["payload_state_change_percent"],
+                "dlc_transition_count": item["dlc_transition_count"],
+                "rtr_data_transition_count": item["rtr_data_transition_count"],
+                "comparable_payload_transition_count": item["comparable_payload_transition_count"],
+                "comparable_payload_change_count": item["comparable_payload_change_count"],
+                "introduced_byte_count": item["introduced_byte_count"],
+                "removed_byte_count": item["removed_byte_count"],
+                "last_payload_hex": item["last_payload_hex"],
+                "byte_change_counts": ";".join(str(value) for value in item["byte_change_counts"]),
+                "bit_change_counts": ";".join(
+                    "|".join(str(value) for value in byte_counts)
+                    for byte_counts in item["bit_change_counts"]
+                ),
+            }
+            writer.writerow({key: _spreadsheet_safe(value) for key, value in row.items()})
+        return output.getvalue()
+
+    @staticmethod
+    def _write_identifiers(path: Path, identifiers: list[dict[str, Any]]) -> None:
+        path.write_text(
+            CanDecodeManager._render_identifiers_csv(identifiers),
+            encoding="utf-8",
+            newline="",
+        )

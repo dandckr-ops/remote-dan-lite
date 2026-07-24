@@ -16,7 +16,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from remote_dan import __version__
-from remote_dan.can_analysis import NOMINAL_BITRATES
+from remote_dan.can_analysis import (
+    NOMINAL_BITRATES,
+    aggregate_can_identifiers,
+    build_can_diagnostics,
+    build_can_payload_heatmap,
+    build_can_timeline,
+    compare_can_decode_results,
+    decode_can_waveform,
+)
 from remote_dan.bus_survey import (
     BusSurveyBackend,
     BusSurveyManager,
@@ -104,13 +112,12 @@ def _valid_payload_hex(value: object, *, max_bytes: int = 8) -> bool:
     )
 
 
-def _valid_identifier_summary(item: object) -> bool:
+def _valid_identifier_summary(item: object, *, artifact_schema_version: int = 2) -> bool:
     if not isinstance(item, dict):
         return False
     identifier = item.get("identifier")
     extended = item.get("extended")
     frame_count = item.get("frame_count")
-    payload_changes = item.get("payload_change_count")
     first = item.get("first_timestamp_us")
     last = item.get("last_timestamp_us")
     byte_changes = item.get("byte_change_counts")
@@ -122,23 +129,63 @@ def _valid_identifier_summary(item: object) -> bool:
         or not isinstance(frame_count, int) or isinstance(frame_count, bool) or frame_count <= 0
         or not _finite_nonnegative(first) or not _finite_nonnegative(last)
         or float(last) < float(first)
-        or not isinstance(payload_changes, int) or isinstance(payload_changes, bool)
-        or not 0 <= payload_changes <= frame_count - 1
         or not _valid_payload_hex(item.get("last_payload_hex"))
         or not isinstance(byte_changes, list) or len(byte_changes) > 8
-        or any(
-            not isinstance(value, int) or isinstance(value, bool)
-            or not 0 <= value <= frame_count - 1
-            for value in byte_changes
-        )
     ):
         return False
-    for name in ("observed_duration_us", "mean_period_us", "mean_frequency_hz",
-                 "min_interval_us", "max_interval_us"):
+    if artifact_schema_version == 1:
+        payload_changes = item.get("payload_change_count")
+        return (
+            isinstance(payload_changes, int)
+            and not isinstance(payload_changes, bool)
+            and 0 <= payload_changes <= frame_count - 1
+            and all(
+                isinstance(value, int) and not isinstance(value, bool)
+                and 0 <= value <= frame_count - 1
+                for value in byte_changes
+            )
+        )
+    interval_count = item.get("interval_count")
+    state_changes = item.get("payload_state_change_count")
+    bit_changes = item.get("bit_change_counts")
+    if (
+        not isinstance(interval_count, int) or isinstance(interval_count, bool)
+        or interval_count != frame_count - 1
+        or not isinstance(state_changes, int) or isinstance(state_changes, bool)
+        or not 0 <= state_changes <= interval_count
+        or not isinstance(bit_changes, list) or len(bit_changes) != len(byte_changes)
+        or item.get("inter_arrival_stddev_measure")
+        != "population standard deviation; reported only with at least 3 intervals"
+    ):
+        return False
+    for name in (
+        "payload_state_transition_count", "dlc_transition_count",
+        "rtr_data_transition_count", "comparable_payload_transition_count",
+        "comparable_payload_change_count", "introduced_byte_count", "removed_byte_count",
+    ):
+        value = item.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+    for name in (
+        "observed_duration_us", "mean_period_us", "mean_frequency_hz",
+        "min_interval_us", "median_interval_us", "max_interval_us",
+        "inter_arrival_stddev_us", "payload_state_change_percent",
+    ):
         value = item.get(name)
         if value is not None and not _finite_nonnegative(value):
             return False
-    return True
+    if interval_count < 3 and item.get("inter_arrival_stddev_us") is not None:
+        return False
+    return all(
+        isinstance(byte_counts, list)
+        and len(byte_counts) == 8
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            and 0 <= value <= interval_count
+            for value in byte_counts
+        )
+        for byte_counts in bit_changes
+    )
 
 
 def _valid_can_frame(frame: object) -> bool:
@@ -179,6 +226,19 @@ def _valid_can_frame(frame: object) -> bool:
 def _valid_can_decode_document(document: object, run_id: str) -> bool:
     if not isinstance(document, dict):
         return False
+    artifact_schema_version = document.get("artifact_schema_version", 1)
+    version_fields_valid = (
+        artifact_schema_version == 1
+        and "artifact_schema_version" not in document
+        and "physical_layer_diagnostics" not in document
+        and "integrity_diagnostics" not in document
+    ) or (
+        artifact_schema_version == 2
+        and document.get("decoder_algorithm_version") == 2
+        and document.get("analyzer_version") == 2
+        and isinstance(document.get("decoder_settings"), dict)
+        and document["decoder_settings"].get("classical_can_only") is True
+    )
     source_run_id = document.get("source_run_id")
     source_capture_id = document.get("source_capture_id")
     source_capture_type = document.get("source_capture_type")
@@ -192,7 +252,8 @@ def _valid_can_decode_document(document: object, run_id: str) -> bool:
     identifier_count = document.get("identifier_count")
     writes_performed = document.get("writes_performed")
     return (
-        document.get("run_id") == run_id
+        version_fields_valid
+        and document.get("run_id") == run_id
         and document.get("capture_type") == "can_decode"
         and isinstance(source_run_id, str)
         and RUN_ID_PATTERN.fullmatch(source_run_id) is not None
@@ -242,18 +303,21 @@ def _update_identifier_evidence(
             "first": timestamp,
             "last": timestamp,
             "interval_sum": 0.0,
+            "interval_square_sum": 0.0,
             "min_interval": None,
             "max_interval": None,
             "payload_state": payload_state,
             "payload": payload,
             "payload_changes": 0,
             "byte_changes": [0] * len(payload),
+            "bit_changes": [[0] * 8 for _ in payload],
             "last_payload_hex": str(frame["payload_hex"]),
         }
         return
     interval = timestamp - float(state["last"])
     state["count"] = int(state["count"]) + 1
     state["interval_sum"] = float(state["interval_sum"]) + interval
+    state["interval_square_sum"] = float(state["interval_square_sum"]) + interval * interval
     state["min_interval"] = (
         interval if state["min_interval"] is None
         else min(float(state["min_interval"]), interval)
@@ -266,18 +330,28 @@ def _update_identifier_evidence(
         state["payload_changes"] = int(state["payload_changes"]) + 1
     previous_payload = list(state["payload"])
     byte_changes = list(state["byte_changes"])
+    bit_changes = [list(counts) for counts in state["bit_changes"]]
     maximum_length = max(len(previous_payload), len(payload))
     byte_changes.extend([0] * (maximum_length - len(byte_changes)))
+    bit_changes.extend([[0] * 8 for _ in range(maximum_length - len(bit_changes))])
     for index in range(maximum_length):
         previous_value = previous_payload[index] if index < len(previous_payload) else None
         current_value = payload[index] if index < len(payload) else None
         if previous_value != current_value:
             byte_changes[index] += 1
+            if previous_value is None or current_value is None:
+                bit_changes[index] = [count + 1 for count in bit_changes[index]]
+            else:
+                changed = previous_value ^ current_value
+                for bit_index in range(8):
+                    if changed & (1 << (7 - bit_index)):
+                        bit_changes[index][bit_index] += 1
     state.update({
         "last": timestamp,
         "payload_state": payload_state,
         "payload": payload,
         "byte_changes": byte_changes,
+        "bit_changes": bit_changes,
         "last_payload_hex": str(frame["payload_hex"]),
     })
 
@@ -285,6 +359,7 @@ def _update_identifier_evidence(
 def _summarize_identifier_evidence(
     accumulators: dict[tuple[int, bool], dict[str, Any]],
 ) -> list[dict[str, object]]:
+    """Recompute the immutable v1 identifier schema for legacy evidence."""
     summaries: list[dict[str, object]] = []
     for (identifier, extended), state in sorted(accumulators.items()):
         count = int(state["count"])
@@ -698,11 +773,11 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.get("/api/can-decodes/{run_id}")
-    def can_decode_result(
+    def _load_authoritative_can_decode_result(
         run_id: str,
         identifier: str = "",
         changing_only: bool = False,
+        identifier_limit: int | None = 200,
     ) -> dict[str, object]:
         if not RUN_ID_PATTERN.fullmatch(run_id) or run_id in {".", ".."}:
             raise HTTPException(status_code=404, detail="CAN decode not found")
@@ -723,17 +798,28 @@ def create_app(
             frames_bytes = read_authoritative_artifact(
                 capture_dir, record, "frames.jsonl", max_bytes=MAX_FRAMES_JSONL_BYTES
             )
-            read_authoritative_artifact(
+            identifiers_bytes = read_authoritative_artifact(
                 capture_dir, record, "identifiers.csv", max_bytes=MAX_SUMMARY_BYTES
             )
-            summary = json.loads(read_authoritative_artifact(
+            summary_bytes = read_authoritative_artifact(
                 capture_dir, record, "summary.json", max_bytes=MAX_SUMMARY_BYTES
-            ))
+            )
+            summary = json.loads(summary_bytes)
             manifest = json.loads(read_authoritative_artifact(
                 capture_dir, record, "manifest.json", max_bytes=MAX_MANIFEST_BYTES
             ))
+            artifact_schema_version = int(manifest.get("artifact_schema_version", 1))
+            if int(summary.get("artifact_schema_version", 1)) != artifact_schema_version:
+                raise OSError("CAN decode artifact schema versions disagree")
             identity_fields = (
+                "artifact_schema_version",
+                "decoder_algorithm_version",
+                "analyzer_version",
+                "decoder_settings",
+                "capture_id",
+                "captured_at",
                 "source_run_id",
+                "source_captured_at",
                 "source_capture_id",
                 "source_capture_type",
                 "source_profile",
@@ -747,6 +833,8 @@ def create_app(
                 "writes_performed",
                 "frame_count",
                 "identifier_count",
+                "physical_layer_diagnostics",
+                "integrity_diagnostics",
             )
             if (
                 not _valid_can_decode_document(manifest, run_id)
@@ -754,6 +842,19 @@ def create_app(
                 or any(manifest.get(name) != summary.get(name) for name in identity_fields)
             ):
                 raise OSError("not a CAN decode")
+            if artifact_schema_version == 2 and (
+                manifest.get("capture_id") != record.get("id")
+                or manifest.get("captured_at") != record.get("captured_at")
+                or manifest.get("summary") != summary
+                or manifest.get("artifacts")
+                != ["frames.jsonl", "identifiers.csv", "summary.json", "manifest.json"]
+                or manifest.get("sha256") != {
+                    "frames.jsonl": hashlib.sha256(frames_bytes).hexdigest(),
+                    "identifiers.csv": hashlib.sha256(identifiers_bytes).hexdigest(),
+                    "summary.json": hashlib.sha256(summary_bytes).hexdigest(),
+                }
+            ):
+                raise OSError("CAN decode manifest declarations are not authoritative")
             source_record = database.get_capture_by_run_id(str(manifest["source_run_id"]))
             recorded_source_profile = (
                 source_record.get("metadata", {}).get("profile")
@@ -766,6 +867,10 @@ def create_app(
                 or source_record.get("id") != manifest["source_capture_id"]
                 or source_record.get("capture_type") != manifest["source_capture_type"]
                 or source_record.get("samples") != manifest["source_parent_samples"]
+                or (
+                    artifact_schema_version == 2
+                    and manifest.get("source_captured_at") != source_record.get("captured_at")
+                )
                 or (
                     recorded_source_profile is not None
                     and recorded_source_profile != manifest["source_profile"]
@@ -829,12 +934,53 @@ def create_app(
                 raise OSError("CAN decode parent is no longer eligible")
             if manifest["source_artifact"] != expected_source_artifact:
                 raise OSError("CAN decode parent artifact selection is inconsistent")
+            source_time = None
+            if artifact_schema_version == 2:
+                source_time, source_can_h, source_can_l = (
+                    CanDecodeManager._load_waveform_bytes(source_bytes)
+                )
+                source_decoded = decode_can_waveform(
+                    source_time, source_can_h, source_can_l
+                )
+                expected_diagnostics = build_can_diagnostics(
+                    source_time, source_can_h, source_can_l, source_decoded
+                )
+                expected_decode_metadata = {
+                    "can_polarity": source_decoded["polarity"],
+                    "nominal_bitrate_bps": source_decoded["nominal_bitrate_bps"],
+                    "rejected_candidate_count": int(
+                        source_decoded["rejected_candidate_count"]
+                    ),
+                    "unsupported_fd_candidate_count": int(
+                        source_decoded.get("unsupported_fd_candidate_count", 0)
+                    ),
+                    "warnings": list(source_decoded["warnings"]),
+                    "writes_performed": 0,
+                }
+                if any(
+                    manifest.get(name) != expected_diagnostics[name]
+                    or summary.get(name) != expected_diagnostics[name]
+                    for name in (
+                        "physical_layer_diagnostics", "integrity_diagnostics",
+                    )
+                ):
+                    raise OSError("CAN decode diagnostics contradict source evidence")
+                if any(
+                    manifest.get(name) != value or summary.get(name) != value
+                    for name, value in expected_decode_metadata.items()
+                ):
+                    raise OSError("CAN decode metadata contradicts source evidence")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
         all_identifiers = summary.get("identifiers", [])
         if (
             not isinstance(all_identifiers, list)
-            or any(not _valid_identifier_summary(item) for item in all_identifiers)
+            or any(
+                not _valid_identifier_summary(
+                    item, artifact_schema_version=artifact_schema_version
+                )
+                for item in all_identifiers
+            )
         ):
             raise HTTPException(status_code=404, detail="CAN decode not found")
         summary_by_key = {
@@ -848,11 +994,16 @@ def create_app(
             normalized = str(item.get("identifier_hex", "")).lower().removeprefix("0x")
             return not identifier_filter or identifier_filter in normalized
 
+        changing_field = (
+            "payload_state_change_count"
+            if artifact_schema_version == 2
+            else "payload_change_count"
+        )
         filtered_identifiers = [
             item for item in all_identifiers
             if isinstance(item, dict)
             and identifier_matches(item)
-            and (not changing_only or int(item.get("payload_change_count", 0)) > 0)
+            and (not changing_only or int(item.get(changing_field, 0)) > 0)
         ]
         changing_keys = {
             (int(item["identifier"]), bool(item.get("extended")))
@@ -864,7 +1015,8 @@ def create_app(
         frame_counts: dict[tuple[int, bool], int] = {}
         previous_order: tuple[float, int, bool] | None = None
         previous_source_bounds: tuple[int, int] | None = None
-        identifier_evidence: dict[tuple[int, bool], dict[str, Any]] = {}
+        parsed_frame_evidence: list[dict[str, Any]] = []
+        legacy_identifier_evidence: dict[tuple[int, bool], dict[str, Any]] = {}
         expected_bitrate = int(manifest["nominal_bitrate_bps"])
         source_samples = int(manifest["source_samples"])
         try:
@@ -901,7 +1053,9 @@ def create_app(
                     raise ValueError("CAN frame has no identifier summary")
                 scanned_frames += 1
                 frame_counts[key] = frame_counts.get(key, 0) + 1
-                _update_identifier_evidence(identifier_evidence, frame)
+                parsed_frame_evidence.append(frame)
+                if artifact_schema_version == 1:
+                    _update_identifier_evidence(legacy_identifier_evidence, frame)
                 if not identifier_matches(frame):
                     continue
                 if changing_only and (
@@ -917,8 +1071,19 @@ def create_app(
                 for key, item in summary_by_key.items()
             ):
                 raise ValueError("CAN identifier frame count mismatch")
-            if all_identifiers != _summarize_identifier_evidence(identifier_evidence):
+            expected_identifiers = (
+                aggregate_can_identifiers(parsed_frame_evidence)
+                if artifact_schema_version == 2
+                else _summarize_identifier_evidence(legacy_identifier_evidence)
+            )
+            if all_identifiers != expected_identifiers:
                 raise ValueError("CAN identifier summary does not match frame evidence")
+            if artifact_schema_version == 2 and (
+                parsed_frame_evidence != source_decoded["frames"]
+                or identifiers_bytes.decode("utf-8")
+                != CanDecodeManager._render_identifiers_csv(expected_identifiers)
+            ):
+                raise ValueError("CAN child artifacts do not match decoded source evidence")
             for source in (manifest, summary):
                 if "frame_count" in source and (
                     not isinstance(source["frame_count"], int)
@@ -934,15 +1099,75 @@ def create_app(
                     raise ValueError("CAN identifier count mismatch")
         except (ValueError, OSError, UnicodeError, json.JSONDecodeError):
             raise HTTPException(status_code=404, detail="CAN decode not found") from None
-        identifiers = filtered_identifiers[:200]
+        identifiers = (
+            filtered_identifiers
+            if identifier_limit is None
+            else filtered_identifiers[:identifier_limit]
+        )
         total_identifiers = len(filtered_identifiers)
+        timeline = build_can_timeline(frames, limit=200)
+        if artifact_schema_version == 2:
+            physical_layer_diagnostics = manifest["physical_layer_diagnostics"]
+            integrity_diagnostics = manifest["integrity_diagnostics"]
+            capabilities = integrity_diagnostics["capabilities"]
+            capture_duration_us = physical_layer_diagnostics["capture_duration_us"]
+            heatmap = build_can_payload_heatmap(
+                all_identifiers,
+                capture_duration_us=float(capture_duration_us),
+                identifier_filter=identifier_filter,
+                changing_only=changing_only,
+                identifier_limit=200,
+            )
+        else:
+            physical_layer_diagnostics = None
+            integrity_diagnostics = None
+            capture_duration_us = None
+            capabilities = {
+                "legacy_evidence": True,
+                "sampled_waveform_analysis_available": False,
+                "scope_acquisition_available": True,
+                "long_listen_only_can_adapter_available": False,
+                "socketcan_or_provider_available": False,
+                "transmit_available": False,
+                "replay_available": False,
+                "query_available": False,
+            }
+            heatmap = {
+                "source_identifier_count": len(all_identifiers),
+                "total_identifier_count": 0,
+                "returned_identifier_count": 0,
+                "identifiers_truncated": False,
+                "identifier_limit": 200,
+                "bin_count": 64,
+                "bin_width_bits": 1,
+                "cell_limit": 12_800,
+                "returned_cell_count": 0,
+                "capture_interval_us": {"start": 0.0, "end": capture_duration_us},
+                "ranking_policy": "unavailable for legacy artifact schema v1",
+                "selection_policy": "unavailable for legacy artifact schema v1",
+                "cell_semantics": "unavailable for legacy artifact schema v1",
+                "identifiers": [],
+            }
         return {
+            "artifact_schema_version": artifact_schema_version,
+            "decoder_algorithm_version": manifest.get("decoder_algorithm_version", 1),
+            "analyzer_version": manifest.get("analyzer_version"),
+            "decoder_settings": manifest.get("decoder_settings", {"classical_can_only": True}),
             "run_id": run_id,
             "capture_id": record["id"],
+            "captured_at": manifest.get("captured_at"),
             "source_run_id": manifest.get("source_run_id"),
+            "source_capture_id": manifest.get("source_capture_id"),
+            "source_sha256": manifest.get("source_sha256"),
+            "source_manifest_sha256": manifest.get("source_manifest_sha256"),
+            "source_captured_at": manifest.get("source_captured_at"),
             "can_polarity": manifest.get("can_polarity"),
             "nominal_bitrate_bps": manifest.get("nominal_bitrate_bps"),
             "writes_performed": 0,
+            "capture_duration_us": capture_duration_us,
+            "physical_layer_diagnostics": physical_layer_diagnostics,
+            "integrity_diagnostics": integrity_diagnostics,
+            "capabilities": capabilities,
             "identifier_filter": identifier,
             "changing_only": changing_only,
             "frame_limit": 200,
@@ -950,11 +1175,15 @@ def create_app(
             "returned_frame_count": len(frames),
             "frames_truncated": total_frames > len(frames),
             "frames": frames,
-            "identifier_limit": 200,
+            "identifier_limit": identifier_limit,
             "total_identifier_count": total_identifiers,
             "returned_identifier_count": len(identifiers),
             "identifiers_truncated": total_identifiers > len(identifiers),
             "identifiers": identifiers,
+            "timeline_limit": 200,
+            "returned_timeline_count": len(timeline),
+            "timeline": timeline,
+            "payload_heatmap": heatmap,
             "warnings": manifest.get("warnings", []),
             "limitations": manifest.get("limitations", []),
             "artifact_urls": {
@@ -962,6 +1191,44 @@ def create_app(
                 "identifiers_csv": f"/artifacts/{run_id}/identifiers.csv",
             },
         }
+
+    @app.get("/api/can-decodes/{run_id}")
+    def can_decode_result(
+        run_id: str,
+        identifier: str = "",
+        changing_only: bool = False,
+    ) -> dict[str, object]:
+        return _load_authoritative_can_decode_result(
+            run_id, identifier, changing_only, identifier_limit=200
+        )
+
+    @app.get("/api/can-decode-comparisons")
+    def compare_can_decodes(
+        baseline_run_id: str,
+        candidate_run_id: str,
+    ) -> dict[str, object]:
+        for run_id in (baseline_run_id, candidate_run_id):
+            if (
+                not RUN_ID_PATTERN.fullmatch(run_id)
+                or run_id in {".", ".."}
+                or ".partial" in run_id.lower()
+            ):
+                raise HTTPException(status_code=422, detail="invalid CAN decode run ID")
+        if baseline_run_id == candidate_run_id:
+            raise HTTPException(
+                status_code=422,
+                detail="baseline and candidate must be different CAN decode runs",
+            )
+        baseline = _load_authoritative_can_decode_result(
+            baseline_run_id, identifier_limit=None
+        )
+        candidate = _load_authoritative_can_decode_result(
+            candidate_run_id, identifier_limit=None
+        )
+        try:
+            return compare_can_decode_results(baseline, candidate)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/bus-surveys", status_code=201)
     def create_bus_survey(payload: BusSurveyPayload) -> dict[str, object]:

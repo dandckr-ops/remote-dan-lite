@@ -248,7 +248,11 @@ def test_identifier_aggregation_is_deterministic_and_counts_payload_changes() ->
     assert first["mean_frequency_hz"] == 4000.0
     assert first["min_interval_us"] == 200.0
     assert first["max_interval_us"] == 300.0
-    assert first["payload_change_count"] == 2
+    assert first["interval_count"] == 2
+    assert first["median_interval_us"] == 250.0
+    assert first["inter_arrival_stddev_us"] is None
+    assert first["payload_state_change_count"] == 2
+    assert first["payload_state_change_percent"] == 100.0
     assert first["last_payload_hex"] == "BB01"
     assert first["byte_change_counts"] == [1, 1]
     assert summaries[1]["mean_period_us"] is None

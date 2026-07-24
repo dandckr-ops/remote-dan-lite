@@ -391,21 +391,11 @@ def analyze_bus_survey(
                     f"unsafe common mode in {len(unsafe_common_windows)} window(s)"
                 ],
             )
-        can_polarity = "expected"
         try:
             can = analyze_can_waveform(segment.time_us, positive, negative)
         except ValueError:
             can = {"status": "insufficient_timing_evidence"}
-        if int(can.get("crc_valid_header_count", 0)) == 0:
-            try:
-                reversed_can = analyze_can_waveform(
-                    segment.time_us, negative, positive
-                )
-            except ValueError:
-                reversed_can = {"status": "insufficient_timing_evidence"}
-            if int(reversed_can.get("crc_valid_header_count", 0)) > 0:
-                can = reversed_can
-                can_polarity = "reversed"
+        can_polarity = str(can.get("can_polarity", "expected"))
         if can.get("status") == "analyzed" and int(can.get("crc_valid_header_count", 0)) > 0:
             rate = int(can["nominal_bitrate_bps"])
             features["can_analysis"] = can

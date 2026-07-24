@@ -561,15 +561,7 @@ class CaptureManager:
             differential = can_h - can_l
             common_mode = (can_h + can_l) / 2.0
             can_analysis = analyze_can_waveform(data.time_us, can_h, can_l)
-            can_polarity = "expected"
-            if int(can_analysis.get("crc_valid_header_count", 0)) == 0:
-                reversed_analysis = analyze_can_waveform(data.time_us, can_l, can_h)
-                if int(reversed_analysis.get("crc_valid_header_count", 0)) > 0:
-                    can_analysis = reversed_analysis
-                    can_polarity = "reversed"
-                    can_analysis.setdefault("warnings", []).append(
-                        "CAN polarity is reversed relative to the recorded CAN-H/CAN-L labels; verify or swap the B/C probe leads."
-                    )
+            can_polarity = str(can_analysis.get("can_polarity", "expected"))
             if data.overflow_channels:
                 can_analysis["confidence"] = "low"
                 can_analysis.setdefault("warnings", []).append(

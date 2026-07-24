@@ -12,6 +12,7 @@ import pytest
 import remote_dan.app as app_module
 from remote_dan.app import create_app
 from remote_dan.can_analysis import aggregate_can_identifiers
+from remote_dan.can_decode import CanDecodeManager
 from remote_dan.capture import SimulatorBackend
 from remote_dan.modbus_scan import ModbusSimulatorBackend
 
@@ -635,6 +636,31 @@ def test_can_decode_api_lists_sources_creates_child_and_returns_bounded_rows(
     assert payload["returned_frame_count"] == len(payload["frames"])
     assert payload["returned_frame_count"] <= payload["frame_limit"] == 200
     assert payload["frames_truncated"] is (child["frame_count"] > 200)
+    assert payload["artifact_schema_version"] == 2
+    assert payload["decoder_algorithm_version"] == 2
+    assert payload["analyzer_version"] == 2
+    assert payload["source_sha256"] == child["source_sha256"]
+    assert payload["source_captured_at"] == source_manifest["captured_at"]
+    assert payload["capture_duration_us"] > 0
+    assert payload["physical_layer_diagnostics"] == child["physical_layer_diagnostics"]
+    assert payload["integrity_diagnostics"] == child["integrity_diagnostics"]
+    assert payload["timeline_limit"] == 200
+    assert payload["returned_timeline_count"] == len(payload["timeline"])
+    assert payload["timeline"] == [
+        {
+            key: frame[key]
+            for key in (
+                "timestamp_us", "identifier", "identifier_hex", "extended", "remote",
+                "dlc", "payload_hex", "ack_slot",
+            )
+        }
+        for frame in payload["frames"]
+    ]
+    assert payload["payload_heatmap"]["bin_count"] == 64
+    assert payload["payload_heatmap"]["returned_cell_count"] <= 12_800
+    assert payload["capabilities"]["sampled_waveform_analysis_available"] is True
+    assert payload["capabilities"]["long_listen_only_can_adapter_available"] is False
+    assert payload["capabilities"]["transmit_available"] is False
     assert payload["artifact_urls"] == {
         "frames_jsonl": f"/artifacts/{child['run_id']}/frames.jsonl",
         "identifiers_csv": f"/artifacts/{child['run_id']}/identifiers.csv",
@@ -642,6 +668,162 @@ def test_can_decode_api_lists_sources_creates_child_and_returns_bounded_rows(
     with (tmp_path / "captures" / child["run_id"] / "frames.jsonl").open("a") as handle:
         handle.write("{}\n")
     assert client.get(f"/api/can-decodes/{child['run_id']}").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "artifact_schema_version", "physical_level", "physical_duration", "integrity_count",
+        "integrity_occupancy", "identifier_jitter", "identifier_payload_percent",
+        "identifier_bit_changes",
+    ),
+)
+def test_can_decode_v2_contradictions_fail_closed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "v2 contradiction source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    child = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"],
+        "label": "v2 contradiction child",
+    }).json()
+    run_dir = capture_root / child["run_id"]
+    manifest_path = run_dir / "manifest.json"
+    summary_path = run_dir / "summary.json"
+    manifest = json.loads(manifest_path.read_text())
+    summary = json.loads(summary_path.read_text())
+    if mutation == "artifact_schema_version":
+        manifest["artifact_schema_version"] = summary["artifact_schema_version"] = 3
+    elif mutation == "physical_level":
+        for document in (manifest, summary):
+            document["physical_layer_diagnostics"]["dominant"]["can_h_v"]["median"] += 0.25
+    elif mutation == "physical_duration":
+        for document in (manifest, summary):
+            document["physical_layer_diagnostics"]["capture_duration_us"] += 1
+    elif mutation == "integrity_count":
+        for document in (manifest, summary):
+            document["integrity_diagnostics"]["validated_frame_count"] += 1
+    elif mutation == "integrity_occupancy":
+        for document in (manifest, summary):
+            document["integrity_diagnostics"]["validated_classical_frame_wire_occupancy_percent"] += 1
+    elif mutation == "identifier_jitter":
+        summary["identifiers"][0]["inter_arrival_stddev_us"] = 123.0
+    elif mutation == "identifier_payload_percent":
+        summary["identifiers"][0]["payload_state_change_percent"] = 12.5
+    else:
+        summary["identifiers"][0]["bit_change_counts"][0][0] += 1
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    manifest["sha256"]["summary.json"] = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with app.state.database._connect() as connection:
+        for filename, path in (("summary.json", summary_path), ("manifest.json", manifest_path)):
+            connection.execute(
+                "UPDATE artifacts SET size_bytes = ?, sha256 = ? WHERE capture_id = ? AND filename = ?",
+                (
+                    path.stat().st_size,
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    child["capture_id"],
+                    filename,
+                ),
+            )
+
+    response = client.get(f"/api/can-decodes/{child['run_id']}")
+
+    assert response.status_code == 404
+    assert "frames" not in response.json()
+
+
+def test_can_decode_comparison_api_is_read_only_authoritative_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "comparison source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    children = [
+        client.post("/api/can-decodes", json={
+            "source_run_id": source["run_id"],
+            "label": f"comparison child {index}",
+        }).json()
+        for index in (1, 2)
+    ]
+    baseline, candidate = children
+
+    response = client.get("/api/can-decode-comparisons", params={
+        "baseline_run_id": baseline["run_id"],
+        "candidate_run_id": candidate["run_id"],
+    })
+
+    assert response.status_code == 200
+    comparison = response.json()
+    assert comparison["provenance"]["baseline"]["run_id"] == baseline["run_id"]
+    assert comparison["provenance"]["candidate"]["run_id"] == candidate["run_id"]
+    assert comparison["provenance"]["authority"] == "complete authoritative can_decode child chains"
+    assert comparison["limits"] == {"identifier_delta_limit": 200}
+    assert comparison["observed_only_in_candidate"] == []
+    assert comparison["observed_only_in_baseline"] == []
+    assert comparison["common_identifiers"]
+    assert all(
+        item["observed_window_rate_hz_delta"] == 0
+        for item in comparison["identifier_deltas"]
+    )
+    assert client.get("/api/can-decode-comparisons", params={
+        "baseline_run_id": baseline["run_id"],
+        "candidate_run_id": baseline["run_id"],
+    }).status_code == 422
+    assert client.get("/api/can-decode-comparisons", params={
+        "baseline_run_id": "../escape",
+        "candidate_run_id": candidate["run_id"],
+    }).status_code == 422
+
+    candidate_summary = capture_root / candidate["run_id"] / "summary.json"
+    candidate_summary.write_text(candidate_summary.read_text() + " ", encoding="utf-8")
+    assert client.get("/api/can-decode-comparisons", params={
+        "baseline_run_id": baseline["run_id"],
+        "candidate_run_id": candidate["run_id"],
+    }).status_code == 404
+
+
+def test_can_decode_comparison_rejects_pending_child(tmp_path: Path) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "pending comparison source",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    baseline = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"], "label": "pending baseline",
+    }).json()
+    candidate = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"], "label": "pending candidate",
+    }).json()
+    app.state.database.set_capture_status(candidate["capture_id"], "pending")
+
+    response = client.get("/api/can-decode-comparisons", params={
+        "baseline_run_id": baseline["run_id"],
+        "candidate_run_id": candidate["run_id"],
+    })
+
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -788,6 +970,7 @@ def test_can_decode_openapi_is_passive_and_has_no_bus_authority(tmp_path: Path) 
     }
     assert set(can_paths) == {
         "/api/can-decode-sources",
+        "/api/can-decode-comparisons",
         "/api/can-decodes",
         "/api/can-decodes/{run_id}",
     }
@@ -847,7 +1030,26 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         "".join(json.dumps(frame) + "\n" for frame in frames),
         encoding="utf-8",
     )
-    identifiers = aggregate_can_identifiers(frames)
+    modern_identifiers = aggregate_can_identifiers(frames)
+    identifiers = [
+        {
+            "identifier": item["identifier"],
+            "identifier_hex": item["identifier_hex"],
+            "extended": item["extended"],
+            "frame_count": item["frame_count"],
+            "first_timestamp_us": item["first_timestamp_us"],
+            "last_timestamp_us": item["last_timestamp_us"],
+            "observed_duration_us": item["observed_duration_us"],
+            "mean_period_us": item["mean_period_us"],
+            "mean_frequency_hz": item["mean_frequency_hz"],
+            "min_interval_us": item["min_interval_us"],
+            "max_interval_us": item["max_interval_us"],
+            "payload_change_count": item["payload_state_change_count"],
+            "last_payload_hex": item["last_payload_hex"],
+            "byte_change_counts": item["byte_change_counts"],
+        }
+        for item in modern_identifiers
+    ]
     document_identity = {
         "run_id": run_id,
         "capture_type": "can_decode",
@@ -867,6 +1069,17 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
         "frame_count": len(frames),
         "identifier_count": len(identifiers),
     }))
+    assert app_module._valid_can_decode_document(
+        json.loads((run_dir / "manifest.json").read_text()), run_id
+    )
+    assert all(
+        app_module._valid_identifier_summary(item, artifact_schema_version=1)
+        for item in identifiers
+    )
+    legacy_evidence = {}
+    for frame in frames:
+        app_module._update_identifier_evidence(legacy_evidence, frame)
+    assert app_module._summarize_identifier_evidence(legacy_evidence) == identifiers
     capture_id = app.state.database.create_capture(
         run_id=run_id,
         captured_at="2026-07-23T12:00:00+00:00",
@@ -891,11 +1104,20 @@ def test_can_decode_filter_scans_full_artifact_before_applying_api_limit(
     assert client.get(f"/api/can-decodes/{run_id}").status_code == 404
     app.state.database.complete_capture_with_artifacts(capture_id, registrations)
 
-    unfiltered = client.get(f"/api/can-decodes/{run_id}").json()
-    filtered = client.get(f"/api/can-decodes/{run_id}?identifier=0x321").json()
-    changing = client.get(f"/api/can-decodes/{run_id}?changing_only=true").json()
+    unfiltered_response = client.get(f"/api/can-decodes/{run_id}")
+    filtered_response = client.get(f"/api/can-decodes/{run_id}?identifier=0x321")
+    changing_response = client.get(f"/api/can-decodes/{run_id}?changing_only=true")
+    assert unfiltered_response.status_code == 200, unfiltered_response.text
+    assert filtered_response.status_code == 200, filtered_response.text
+    assert changing_response.status_code == 200, changing_response.text
+    unfiltered = unfiltered_response.json()
+    filtered = filtered_response.json()
+    changing = changing_response.json()
 
     assert unfiltered["returned_frame_count"] == 200
+    assert unfiltered["artifact_schema_version"] == 1
+    assert unfiltered["capabilities"]["legacy_evidence"] is True
+    assert unfiltered["physical_layer_diagnostics"] is None
     assert unfiltered["total_frame_count"] == 206
     assert unfiltered["frames_truncated"] is True
     assert [frame["identifier_hex"] for frame in filtered["frames"]] == ["0x321", "0x321"]
@@ -1207,5 +1429,134 @@ def test_can_decode_result_strict_schema_and_consistency_fail_closed(
     app.state.database.complete_capture_with_artifacts(capture_id, registrations)
 
     response = TestClient(app).get(f"/api/can-decodes/{run_id}")
+    assert response.status_code == 404
+    assert "frames" not in response.json()
+
+
+def test_can_decode_v2_rejects_coherently_rewritten_child_content(tmp_path: Path) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "source binding",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    child = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"],
+        "label": "source-bound child",
+    }).json()
+    run_dir = capture_root / child["run_id"]
+    frames_path = run_dir / "frames.jsonl"
+    identifiers_path = run_dir / "identifiers.csv"
+    summary_path = run_dir / "summary.json"
+    manifest_path = run_dir / "manifest.json"
+
+    frames = [json.loads(line) for line in frames_path.read_text().splitlines()]
+    frames[0]["identifier"] = int(frames[0]["identifier"]) ^ 1
+    frames[0]["identifier_hex"] = f"0x{frames[0]['identifier']:03X}"
+    identifiers = aggregate_can_identifiers(frames)
+    summary = json.loads(summary_path.read_text())
+    summary["identifiers"] = identifiers
+    summary["identifier_count"] = len(identifiers)
+
+    frames_path.write_text(
+        "".join(
+            json.dumps(frame, sort_keys=True, separators=(",", ":")) + "\n"
+            for frame in frames
+        ),
+        encoding="utf-8",
+    )
+    identifiers_path.write_text(
+        CanDecodeManager._render_identifiers_csv(identifiers),
+        encoding="utf-8",
+        newline="",
+    )
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest = json.loads(manifest_path.read_text())
+    manifest["summary"] = summary
+    manifest["sha256"] = {
+        "frames.jsonl": hashlib.sha256(frames_path.read_bytes()).hexdigest(),
+        "identifiers.csv": hashlib.sha256(identifiers_path.read_bytes()).hexdigest(),
+        "summary.json": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with app.state.database._connect() as connection:
+        for filename in ("frames.jsonl", "identifiers.csv", "summary.json", "manifest.json"):
+            path = run_dir / filename
+            connection.execute(
+                "UPDATE artifacts SET size_bytes = ?, sha256 = ? "
+                "WHERE capture_id = ? AND filename = ?",
+                (
+                    path.stat().st_size,
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    child["capture_id"],
+                    filename,
+                ),
+            )
+
+    response = client.get(f"/api/can-decodes/{child['run_id']}")
+    assert response.status_code == 404
+    assert "frames" not in response.json()
+
+
+def test_can_decode_v2_rejects_coherently_rewritten_decode_metadata(tmp_path: Path) -> None:
+    capture_root = tmp_path / "captures"
+    app = create_app(data_dir=capture_root, db_path=tmp_path / "evidence.sqlite3")
+    client = TestClient(app)
+    source = client.post("/api/captures", json={
+        "label": "metadata binding",
+        "preset": "can-analysis",
+        "mode": "simulator",
+        "capture_type": "can",
+        "profile": "network",
+    }).json()
+    child = client.post("/api/can-decodes", json={
+        "source_run_id": source["run_id"],
+        "label": "metadata-bound child",
+    }).json()
+    run_dir = capture_root / child["run_id"]
+    summary_path = run_dir / "summary.json"
+    manifest_path = run_dir / "manifest.json"
+    summary = json.loads(summary_path.read_text())
+    manifest = json.loads(manifest_path.read_text())
+    rewritten_polarity = "reversed" if summary["can_polarity"] == "expected" else "expected"
+    summary["can_polarity"] = rewritten_polarity
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest["can_polarity"] = rewritten_polarity
+    manifest["summary"] = summary
+    manifest["sha256"]["summary.json"] = hashlib.sha256(
+        summary_path.read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with app.state.database._connect() as connection:
+        for filename in ("summary.json", "manifest.json"):
+            path = run_dir / filename
+            connection.execute(
+                "UPDATE artifacts SET size_bytes = ?, sha256 = ? "
+                "WHERE capture_id = ? AND filename = ?",
+                (
+                    path.stat().st_size,
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    child["capture_id"],
+                    filename,
+                ),
+            )
+
+    response = client.get(f"/api/can-decodes/{child['run_id']}")
     assert response.status_code == 404
     assert "frames" not in response.json()
