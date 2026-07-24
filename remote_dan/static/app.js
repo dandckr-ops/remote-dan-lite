@@ -13,6 +13,16 @@ const state = {
     inventoryRevision: null,
     routes: {},
   },
+  loadBank: {
+    activeSession: null,
+    applyingOwner: false,
+    available: false,
+    candidates: [],
+    discovering: false,
+    owner: null,
+    starting: false,
+    stopping: false,
+  },
   canDecode: null,
   obd: {
     subtab: "live-data",
@@ -41,18 +51,20 @@ const channelLetters = ["A", "B", "C", "D"];
 
 function activateTab(name, {updateHash = true, focus = false} = {}) {
   const selectedName = tabNames.includes(name) ? name : "overview";
+  let activeTab = null;
   tabs.forEach((tab) => {
     const active = tab.dataset.tab === selectedName;
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
-    if (active && focus) tab.focus();
+    if (active) {
+      activeTab = tab;
+      if (focus) tab.focus();
+    }
   });
   panels.forEach((panel) => {
     panel.hidden = panel.dataset.panel !== selectedName;
   });
   if (selectedName === "obd") {
-    const selectedTab = tabs.find((tab) => tab.dataset.tab === "obd");
-    selectedTab?.scrollIntoView({block: "nearest", inline: "nearest"});
     refreshObdStatus();
     loadObdRecords();
     scheduleObdLivePoll();
@@ -62,6 +74,7 @@ function activateTab(name, {updateHash = true, focus = false} = {}) {
   if (updateHash) {
     history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${selectedName}`);
   }
+  activeTab?.scrollIntoView({block: "nearest", inline: "center", behavior: "auto"});
 }
 
 function bindTabs() {
@@ -306,6 +319,288 @@ async function loadUsbRouting() {
     updateUsbRoutingControls();
     setUsbRoutingMessage(`USB inventory failed: ${error.message}`, "error");
   }
+}
+
+const loadBankOwnerLabels = {
+  off: "Off",
+  rdl: "Remote Dan Lite",
+  windows: "Windows Workstation",
+};
+
+function selectedLoadBankOwner() {
+  return $('input[name="loadbank-owner"]:checked')?.value || null;
+}
+
+function loadBankOwnerValue(ownership) {
+  if (typeof ownership === "string") return ownership;
+  return ownership?.owner || null;
+}
+
+function updateLoadBankControls() {
+  const loadBank = state.loadBank;
+  const ownsCollection = loadBank.available && state.loadBank.owner === "rdl";
+  const busy = loadBank.discovering || loadBank.starting || loadBank.stopping;
+  const discover = $("#loadbank-discover");
+  const controller = $("#loadbank-controller");
+  const start = $("#loadbank-start");
+  discover.disabled = !ownsCollection || busy;
+  controller.disabled = !ownsCollection || busy || loadBank.candidates.length === 0;
+  start.disabled = !ownsCollection || busy || Boolean(loadBank.activeSession) || !controller.value;
+  $("#loadbank-stop").disabled = !ownsCollection || busy || !loadBank.activeSession;
+  $("#loadbank-owner-form fieldset").disabled = !loadBank.available
+    || loadBank.applyingOwner
+    || Boolean(loadBank.activeSession);
+  const selectedOwner = selectedLoadBankOwner();
+  $("#loadbank-owner-apply").disabled = !loadBank.available
+    || loadBank.applyingOwner
+    || Boolean(loadBank.activeSession)
+    || !selectedOwner
+    || selectedOwner === loadBank.owner;
+
+  const modeMessage = $("#loadbank-mode-message");
+  if (!loadBank.available) {
+    modeMessage.textContent = "Load Bank unavailable. Configure the loopback collector and server-side credential to enable ownership controls.";
+  } else if (loadBank.owner === "windows") {
+    modeMessage.textContent = "RDL polling is disabled. Windows communicates directly over Ethernet.";
+  } else if (loadBank.owner === "rdl") {
+    modeMessage.textContent = "Remote Dan Lite owns collection. Local Auto Detect and session controls are enabled.";
+  } else {
+    modeMessage.textContent = "Collection is Off. Neither Remote Dan Lite nor Windows is authorized to poll the Anybus.";
+  }
+}
+
+function loadBankSnapshotMetric(snapshot, names) {
+  for (const name of names) {
+    if (snapshot?.[name] !== undefined && snapshot[name] !== null) return snapshot[name];
+  }
+  return null;
+}
+
+function renderLoadBankSnapshot(status) {
+  const snapshot = status.latest_snapshot || status.active_session?.latest_snapshot || {};
+  const session = status.active_session || status.recent_sessions?.[0] || {};
+  const captured = loadBankSnapshotMetric(session, ["captured_snapshots", "captured", "captured_count"])
+    ?? loadBankSnapshotMetric(snapshot, ["captured", "captured_count", "sample_count"]);
+  const expected = loadBankSnapshotMetric(session, ["expected_snapshots", "expected", "expected_count"])
+    ?? loadBankSnapshotMetric(snapshot, ["expected", "expected_count", "target_count"]);
+  const qualityValue = loadBankSnapshotMetric(snapshot, ["quality_status", "quality"]);
+  const quality = typeof qualityValue === "object" ? qualityValue?.status : qualityValue;
+  $("#loadbank-captured").textContent = captured === null ? "—" : Number(captured).toLocaleString();
+  $("#loadbank-expected").textContent = expected === null ? "—" : Number(expected).toLocaleString();
+  $("#loadbank-quality").textContent = quality ? String(quality).replaceAll("_", " ").toUpperCase() : "—";
+}
+
+function renderLoadBankSessions(sessions) {
+  const list = $("#loadbank-session-list");
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list";
+    empty.textContent = "No load-bank sessions reported.";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...sessions.map((session) => {
+    const card = document.createElement("article");
+    card.className = "loadbank-session-card";
+    const identity = document.createElement("div");
+    const title = document.createElement("strong");
+    const detail = document.createElement("small");
+    const metadata = session.metadata || {};
+    title.textContent = metadata.generator || metadata.customer || "Load-bank session";
+    detail.textContent = [
+      metadata.customer,
+      metadata.work_order,
+      metadata.technician,
+      session.state || session.status,
+      session.started_at ? formatTimestamp(session.started_at) : null,
+    ].filter(Boolean).join(" · ");
+    identity.append(title, detail);
+    card.append(identity);
+    const sessionUuid = session.uuid || session.session_uuid || session.id;
+    if (sessionUuid) {
+      const download = document.createElement("a");
+      download.href = `/api/loadbank/sessions/${encodeURIComponent(sessionUuid)}/download`;
+      download.textContent = "Download evidence ZIP";
+      card.append(download);
+    }
+    return card;
+  }));
+}
+
+async function loadLoadBankStatus({quiet = false} = {}) {
+  const ownerStatus = $("#loadbank-owner-status");
+  try {
+    const status = await getJson("/api/loadbank/status");
+    const previousOwner = state.loadBank.owner;
+    const owner = loadBankOwnerValue(status.ownership);
+    state.loadBank.available = true;
+    state.loadBank.owner = owner;
+    state.loadBank.activeSession = status.active_session || null;
+    if (owner && (previousOwner !== owner || !selectedLoadBankOwner())) {
+      const ownerChoice = $(`input[name="loadbank-owner"][value="${owner}"]`);
+      if (ownerChoice) ownerChoice.checked = true;
+    }
+    ownerStatus.textContent = loadBankOwnerLabels[owner] || "Unknown owner";
+    ownerStatus.className = `status-label ${owner === "rdl" ? "live" : "planned"}`;
+    renderLoadBankSnapshot(status);
+    renderLoadBankSessions(status.recent_sessions || []);
+    updateLoadBankControls();
+    if (!quiet) {
+      setMessage("#loadbank-message", `Collector ready. Current owner: ${loadBankOwnerLabels[owner] || "unknown"}.`, "success");
+    }
+  } catch (error) {
+    state.loadBank.available = false;
+    state.loadBank.owner = null;
+    state.loadBank.activeSession = null;
+    ownerStatus.textContent = "Collector unavailable";
+    ownerStatus.className = "status-label error";
+    updateLoadBankControls();
+    if (!quiet) setMessage("#loadbank-message", `Load Bank unavailable: ${error.message}`, "error");
+  }
+}
+
+async function discoverLoadBankControllers() {
+  if (state.loadBank.owner !== "rdl") return;
+  state.loadBank.discovering = true;
+  updateLoadBankControls();
+  setMessage("#loadbank-message", "Running Local RDL Auto Detect…");
+  try {
+    const result = await getJson("/api/loadbank/discovery", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    const controllers = result.controllers || [];
+    state.loadBank.candidates = controllers;
+    const select = $("#loadbank-controller");
+    const options = controllers.map((controller) => {
+      const option = document.createElement("option");
+      option.value = controller.candidate_id;
+      option.textContent = controller.label
+        || controller.name
+        || `${controller.candidate_id} · 192.168.1.99:502 · Unit 125`;
+      return option;
+    });
+    if (!options.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No controller detected";
+      options.push(option);
+    }
+    select.replaceChildren(...options);
+    setMessage(
+      "#loadbank-message",
+      options.length && controllers.length
+        ? `${controllers.length} controller candidate${controllers.length === 1 ? "" : "s"} detected.`
+        : "No controller candidate was detected.",
+      controllers.length ? "success" : "error",
+    );
+  } catch (error) {
+    state.loadBank.candidates = [];
+    setMessage("#loadbank-message", `Load Bank Auto Detect failed: ${error.message}`, "error");
+  } finally {
+    state.loadBank.discovering = false;
+    updateLoadBankControls();
+  }
+}
+
+function bindLoadBankControls() {
+  $$('input[name="loadbank-owner"]').forEach((choice) => {
+    choice.addEventListener("change", updateLoadBankControls);
+  });
+  $("#loadbank-controller").addEventListener("change", updateLoadBankControls);
+  $("#loadbank-discover").addEventListener("click", discoverLoadBankControllers);
+
+  $("#loadbank-owner-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const targetOwner = selectedLoadBankOwner();
+    if (!targetOwner || targetOwner === state.loadBank.owner) return;
+    const summary = `${loadBankOwnerLabels[state.loadBank.owner] || "Unknown"} → ${loadBankOwnerLabels[targetOwner]}`;
+    if (!window.confirm(`Apply Collection Owner change?\n\n${summary}`)) return;
+    const confirmedExternalStopped = state.loadBank.owner === "windows" && targetOwner !== "windows";
+    if (confirmedExternalStopped && !window.confirm(
+      "Confirm the Windows collector is stopped before it relinquishes collection ownership.",
+    )) return;
+    state.loadBank.applyingOwner = true;
+    updateLoadBankControls();
+    try {
+      await getJson("/api/loadbank/ownership", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          owner: targetOwner,
+          confirmed_external_stopped: confirmedExternalStopped,
+        }),
+      });
+      await loadLoadBankStatus({quiet: true});
+      setMessage("#loadbank-message", `Collection Owner changed to ${loadBankOwnerLabels[targetOwner]}.`, "success");
+    } catch (error) {
+      setMessage("#loadbank-message", `Collection Owner change failed: ${error.message}`, "error");
+    } finally {
+      state.loadBank.applyingOwner = false;
+      updateLoadBankControls();
+    }
+  });
+
+  $("#loadbank-session-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (state.loadBank.owner !== "rdl") {
+      setMessage("#loadbank-message", "Remote Dan Lite must own collection before a session can start.", "error");
+      return;
+    }
+    const duration = Number($("#loadbank-duration").value);
+    if (!Number.isInteger(duration) || duration < 15 || duration > 1440 || duration % 15 !== 0) {
+      setMessage("#loadbank-message", "Duration must be 15–1440 minutes in 15-minute increments.", "error");
+      return;
+    }
+    state.loadBank.starting = true;
+    updateLoadBankControls();
+    try {
+      await getJson("/api/loadbank/sessions", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          candidate_id: $("#loadbank-controller").value,
+          duration_minutes: duration,
+          metadata: {
+            customer: $("#loadbank-customer").value.trim(),
+            work_order: $("#loadbank-work-order").value.trim(),
+            generator: $("#loadbank-generator").value.trim(),
+            technician: $("#loadbank-technician").value.trim(),
+          },
+        }),
+      });
+      await loadLoadBankStatus({quiet: true});
+      setMessage("#loadbank-message", "Load-bank collection started.", "success");
+    } catch (error) {
+      setMessage("#loadbank-message", `Load-bank start failed: ${error.message}`, "error");
+    } finally {
+      state.loadBank.starting = false;
+      updateLoadBankControls();
+    }
+  });
+
+  $("#loadbank-stop").addEventListener("click", async () => {
+    if (state.loadBank.owner !== "rdl" || !state.loadBank.activeSession) return;
+    if (!window.confirm("Stop the active load-bank collection?")) return;
+    state.loadBank.stopping = true;
+    updateLoadBankControls();
+    try {
+      await getJson("/api/loadbank/sessions/active/stop", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({}),
+      });
+      await loadLoadBankStatus({quiet: true});
+      setMessage("#loadbank-message", "Load-bank collection stopped; collected evidence remains available.", "success");
+    } catch (error) {
+      setMessage("#loadbank-message", `Load-bank stop failed: ${error.message}`, "error");
+    } finally {
+      state.loadBank.stopping = false;
+      updateLoadBankControls();
+    }
+  });
+  updateLoadBankControls();
 }
 
 function channelControl(letter, name) {
@@ -1807,11 +2102,14 @@ bindSerialCaptureForm();
 bindCanCaptureForm();
 bindCanDecodeForm();
 bindModbusScanForm();
+bindLoadBankControls();
 $("#usb-routing-apply").addEventListener("click", applyUsbRouting);
 $("#refresh").addEventListener("click", refreshRuns);
 loadScopeProfiles();
 loadModbusNetworks();
 loadUsbRouting();
+loadLoadBankStatus();
 refreshStatus();
 refreshRuns();
 setInterval(refreshStatus, 15_000);
+setInterval(() => loadLoadBankStatus({quiet: true}), 5_000);

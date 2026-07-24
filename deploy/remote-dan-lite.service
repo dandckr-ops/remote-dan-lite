@@ -1,7 +1,7 @@
 [Unit]
 Description=Remote Dan Lite Traceworks capture console
-After=network-online.target
-Wants=network-online.target
+After=network-online.target basler-loadbank-web.service
+Wants=network-online.target basler-loadbank-web.service
 
 [Service]
 Type=simple
@@ -16,6 +16,11 @@ Environment=REMOTE_DAN_DATA_DIR=/var/lib/remote-dan-lite/captures
 Environment=REMOTE_DAN_DB_PATH=/var/lib/remote-dan-lite/remote-dan.sqlite3
 Environment=MPLCONFIGDIR=/var/lib/remote-dan-lite/matplotlib
 EnvironmentFile=-/etc/remote-dan-lite/environment
+Environment=REMOTE_DAN_LOADBANK_URL=http://127.0.0.1:8777
+Environment=REMOTE_DAN_LOADBANK_PASSWORD_FILE=/run/credentials/remote-dan-lite.service/loadbank-password
+Environment=REMOTE_DAN_LOADBANK_TIMEOUT_SECONDS=10.0
+Environment=REMOTE_DAN_LOADBANK_ALLOWED_ORIGINS=http://192.168.1.225:8776,http://100.81.68.47:8776,http://remote-dan-lite-01:8776,http://remote-dan-lite-01.local:8776,http://remote-dan-lite-01.blowfish-delta.ts.net:8776
+LoadCredential=loadbank-password:/etc/basler-loadbank/web-password
 ExecStart=/opt/remote-dan-lite/.venv/bin/remote-dan-lite
 Restart=on-failure
 RestartSec=3

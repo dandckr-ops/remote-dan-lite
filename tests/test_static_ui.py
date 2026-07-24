@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).parents[1]
 STATIC_DIR = ROOT / "remote_dan" / "static"
 EXPECTED_TABS = [
+    "overview", "bus-sniffer", "scope", "serial", "can", "obd", "modbus",
+    "load-bank", "tests", "timeline", "evidence",
+]
+TOUR_EXPECTED_TABS = [
     "overview", "bus-sniffer", "scope", "serial", "can", "obd", "modbus",
     "tests", "timeline", "evidence",
 ]
@@ -50,7 +55,7 @@ def parse_console() -> ConsoleParser:
     return parser
 
 
-def test_console_declares_ten_accessible_primary_tabs() -> None:
+def test_console_declares_eleven_accessible_primary_tabs() -> None:
     parser = parse_console()
     primary_tabs = [tab for tab in parser.tabs if "data-tab" in tab]
     primary_panels = [panel for panel in parser.panels if "data-panel" in panel]
@@ -88,10 +93,10 @@ def test_console_tour_is_an_accessible_offline_preview_without_live_actions() ->
     parser = ConsoleParser()
     parser.feed(markup)
     parser.close()
-    assert [tab["data-tab"] for tab in parser.tabs] == EXPECTED_TABS
-    assert [panel["data-panel"] for panel in parser.panels] == EXPECTED_TABS
+    assert [tab["data-tab"] for tab in parser.tabs] == TOUR_EXPECTED_TABS
+    assert [panel["data-panel"] for panel in parser.panels] == TOUR_EXPECTED_TABS
 
-    for index, name in enumerate(EXPECTED_TABS):
+    for index, name in enumerate(TOUR_EXPECTED_TABS):
         tab = parser.tabs[index]
         panel = parser.panels[index]
         assert tab["id"] == f"tour-tab-{name}"
@@ -321,6 +326,106 @@ def test_overview_declares_usb_routing_apply_feedback_and_client_flow() -> None:
     assert "USB routing failed:" in script
 
 
+def test_load_bank_tab_declares_ownership_collection_and_evidence_controls() -> None:
+    parser = parse_console()
+    index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    loadbank_markup = index.split('id="panel-load-bank"', 1)[1].split(
+        'id="panel-tests"', 1
+    )[0]
+    required_ids = {
+        "loadbank-owner-status",
+        "loadbank-owner-form",
+        "loadbank-owner-off",
+        "loadbank-owner-rdl",
+        "loadbank-owner-windows",
+        "loadbank-owner-apply",
+        "loadbank-mode-message",
+        "loadbank-discover",
+        "loadbank-controller",
+        "loadbank-duration",
+        "loadbank-customer",
+        "loadbank-work-order",
+        "loadbank-generator",
+        "loadbank-technician",
+        "loadbank-start",
+        "loadbank-stop",
+        "loadbank-captured",
+        "loadbank-expected",
+        "loadbank-quality",
+        "loadbank-session-list",
+        "loadbank-message",
+    }
+
+    assert required_ids <= parser.ids
+    assert "Current Collection Owner" in loadbank_markup
+    assert "Off" in loadbank_markup
+    assert "Remote Dan Lite" in loadbank_markup
+    assert "Windows Workstation" in loadbank_markup
+    assert "192.168.1.99:502 · Unit 125" in loadbank_markup
+    assert "Local RDL Auto Detect" in loadbank_markup
+    assert "RDL polling is disabled" in loadbank_markup
+    assert "Windows communicates directly over Ethernet" in loadbank_markup
+    assert "routing through RDL" not in loadbank_markup
+    assert 'id="loadbank-duration"' in loadbank_markup
+    assert 'min="15"' in loadbank_markup
+    assert 'max="1440"' in loadbank_markup
+    assert 'step="15"' in loadbank_markup
+    for control in ("loadbank-discover", "loadbank-controller", "loadbank-start"):
+        declaration = loadbank_markup.split(f'id="{control}"', 1)[1].split(">", 1)[0]
+        assert "disabled" in declaration
+
+
+def test_load_bank_script_gates_local_controls_and_uses_only_rdl_proxy() -> None:
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "loadBank" in script
+    assert "function updateLoadBankControls" in script
+    assert 'state.loadBank.owner === "rdl"' in script
+    assert "discover.disabled = !ownsCollection" in script
+    assert "controller.disabled = !ownsCollection" in script
+    assert "start.disabled = !ownsCollection" in script
+    assert "window.confirm" in script
+    assert "Windows collector is stopped" in script
+    assert "confirmed_external_stopped" in script
+    assert "Boolean(loadBank.activeSession)" in script
+    assert '"captured_snapshots"' in script
+    assert '"expected_snapshots"' in script
+    assert 'getJson("/api/loadbank/status")' in script
+    assert 'getJson("/api/loadbank/discovery"' in script
+    assert 'getJson("/api/loadbank/ownership"' in script
+    assert 'getJson("/api/loadbank/sessions"' in script
+    assert 'getJson("/api/loadbank/sessions/active/stop"' in script
+    assert 'href = `/api/loadbank/sessions/${encodeURIComponent(sessionUuid)}/download`' in script
+    assert "REMOTE_DAN_LOADBANK_PASSWORD" not in script
+    assert "upstream_url" not in script
+
+
+def test_load_bank_mobile_layout_contains_intrinsic_width_and_reveals_active_tab() -> None:
+    markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    stylesheet = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "/static/app.css?v=obd-fault-summary-v5-loadbank-owner-2" in markup
+    assert "/static/app.js?v=obd-fault-summary-v5-loadbank-owner-2" in markup
+    assert ".loadbank-owner-choices {" in stylesheet
+    assert "min-width: 0" in stylesheet
+    assert ".loadbank-owner-choices legend" in stylesheet
+    assert "white-space: normal" in stylesheet
+    assert "scrollIntoView" in script
+    assert 'inline: "center"' in script
+
+
+def test_console_script_has_valid_javascript_syntax() -> None:
+    result = subprocess.run(
+        ["node", "--check", str(STATIC_DIR / "app.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_console_script_implements_mouse_keyboard_hash_and_voltage_behavior() -> None:
     script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
@@ -464,8 +569,8 @@ def test_obd_browser_code_fences_reads_recovers_polling_and_has_uuid_fallback() 
 def test_changed_static_assets_use_combined_release_cache_key() -> None:
     markup = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert "/static/app.css?v=obd-fault-summary-v5" in markup
-    assert "/static/app.js?v=obd-fault-summary-v5" in markup
+    assert "/static/app.css?v=obd-fault-summary-v5-loadbank-owner-2" in markup
+    assert "/static/app.js?v=obd-fault-summary-v5-loadbank-owner-2" in markup
     assert "/static/can_request_gate.js?v=can-decode-v1-remediation2" in markup
     assert "bus-discovery-1" not in markup
 

@@ -12,10 +12,10 @@ import threading
 from typing import Any, Callable, Literal
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from remote_dan import __version__
 from remote_dan.can_analysis import NOMINAL_BITRATES
@@ -57,6 +57,12 @@ from remote_dan.capture import (
 )
 from remote_dan.database import EvidenceDatabase
 from remote_dan.hardware import probe_pico_hardware
+from remote_dan.loadbank_client import (
+    CollectorHttpError,
+    CollectorUnavailableError,
+    LoadBankClient,
+    load_client_from_environment,
+)
 from remote_dan.modbus_discovery import (
     MAX_SCAN_HOSTS,
     MAX_SCAN_WORKERS,
@@ -404,6 +410,32 @@ class UsbRoutingApplyPayload(BaseModel):
     confirmed: bool = False
 
 
+class StrictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class EmptyLoadBankPayload(StrictPayload):
+    pass
+
+
+class LoadBankOwnershipPayload(StrictPayload):
+    owner: Literal["rdl", "windows", "off"]
+    confirmed_external_stopped: bool
+
+
+class LoadBankMetadataPayload(StrictPayload):
+    customer: str = Field(min_length=1, max_length=120)
+    work_order: str = Field(min_length=1, max_length=80)
+    generator: str = Field(min_length=1, max_length=120)
+    technician: str = Field(min_length=1, max_length=120)
+
+
+class LoadBankSessionPayload(StrictPayload):
+    candidate_id: str = Field(min_length=1, max_length=200)
+    duration_minutes: int = Field(ge=15, le=1440, multiple_of=15)
+    metadata: LoadBankMetadataPayload
+
+
 class CustomerPayload(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     company: str | None = Field(default=None, max_length=120)
@@ -604,6 +636,8 @@ def create_app(
     routing_client: RoutingSocketClient | None = None,
     obd_simulator_provider: OBDProvider | None = None,
     obd_hardware_provider_factory: Callable[[], OBDProvider] | None = None,
+    loadbank_client: LoadBankClient | None = None,
+    loadbank_allowed_origins: set[str] | frozenset[str] | None = None,
 ) -> FastAPI:
     capture_dir = Path(data_dir)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -667,6 +701,18 @@ def create_app(
     app.state.network_probe = network_probe
     app.state.usb_inventory_probe = usb_inventory_probe
     app.state.routing_client = routing_client or RoutingSocketClient(Path("/run/remote-dan-routing/control.sock"))
+    app.state.loadbank_client = loadbank_client
+    app.state.loadbank_allowed_origins = frozenset(
+        loadbank_allowed_origins
+        if loadbank_allowed_origins is not None
+        else (
+            origin.strip()
+            for origin in os.environ.get(
+                "REMOTE_DAN_LOADBANK_ALLOWED_ORIGINS", ""
+            ).split(",")
+            if origin.strip()
+        )
+    )
     app.state.simulator = simulator
     app.state.serial_simulator = serial_simulator
     app.state.modbus_simulator = modbus_simulator
@@ -676,6 +722,28 @@ def create_app(
     app.state.obd_evidence = obd_evidence
     app.state.pico_lock = pico_lock
     app.state.usb_routing_obd_lock = usb_routing_obd_lock
+
+    @app.middleware("http")
+    async def protect_loadbank_mutations(request: Request, call_next: Callable) -> Response:
+        is_mutation = (
+            request.url.path.startswith("/api/loadbank/")
+            and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        )
+        if is_mutation:
+            origin = request.headers.get("origin")
+            if origin not in app.state.loadbank_allowed_origins:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Load Bank mutation origin is not allowed"},
+                )
+            media_type = request.headers.get("content-type", "").partition(";")[0]
+            if media_type.strip().lower() != "application/json":
+                return JSONResponse(
+                    status_code=415,
+                    content={"detail": "Load Bank mutations require application/json"},
+                )
+        return await call_next(request)
+
     app.state.serial_hardware_manager = (
         SerialCaptureManager(capture_dir, backend=serial_backend, database=database)
         if serial_backend is not None
@@ -1346,6 +1414,71 @@ def create_app(
             except (OSError, RoutingSocketError) as exc:
                 raise HTTPException(status_code=503, detail=f"USB routing apply failed: {exc}") from exc
 
+    def loadbank_call(operation: Callable[[LoadBankClient], object]) -> object:
+        client = app.state.loadbank_client
+        if client is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Load Bank unavailable: collector is not configured",
+            )
+        try:
+            return operation(client)
+        except CollectorUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except CollectorHttpError as exc:
+            status_code = exc.status_code if 400 <= exc.status_code <= 599 else 502
+            raise HTTPException(status_code=status_code, detail=exc.detail) from exc
+
+    @app.get("/api/loadbank/status")
+    def loadbank_status() -> object:
+        return loadbank_call(lambda client: client.status())
+
+    @app.post("/api/loadbank/discovery")
+    def loadbank_discovery(
+        _payload: EmptyLoadBankPayload = Body(default_factory=EmptyLoadBankPayload),
+    ) -> object:
+        return loadbank_call(lambda client: client.discover())
+
+    @app.put("/api/loadbank/ownership")
+    def set_loadbank_ownership(payload: LoadBankOwnershipPayload) -> object:
+        return loadbank_call(
+            lambda client: client.set_ownership(
+                payload.owner,
+                confirmed_external_stopped=payload.confirmed_external_stopped,
+            )
+        )
+
+    @app.post("/api/loadbank/sessions", status_code=201)
+    def start_loadbank_session(payload: LoadBankSessionPayload) -> object:
+        return loadbank_call(
+            lambda client: client.start_session(
+                payload.candidate_id,
+                payload.duration_minutes,
+                payload.metadata.model_dump(),
+            )
+        )
+
+    @app.post("/api/loadbank/sessions/active/stop")
+    def stop_loadbank_session(
+        _payload: EmptyLoadBankPayload = Body(default_factory=EmptyLoadBankPayload),
+    ) -> object:
+        return loadbank_call(lambda client: client.stop_session())
+
+    @app.get("/api/loadbank/sessions/{session_uuid}/download")
+    def download_loadbank_session(session_uuid: UUID) -> Response:
+        payload = loadbank_call(lambda client: client.download_session(session_uuid))
+        if not isinstance(payload, bytes):
+            raise HTTPException(status_code=502, detail="collector returned an invalid ZIP response")
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="load-bank-{session_uuid}.zip"'
+                )
+            },
+        )
+
     @app.post("/api/serial/captures", status_code=201)
     def create_serial_capture(payload: SerialCapturePayload) -> dict[str, object]:
         framing = SerialFraming(
@@ -1519,7 +1652,11 @@ def main() -> None:
     host = os.environ.get("REMOTE_DAN_HOST", "0.0.0.0")
     port = int(os.environ.get("REMOTE_DAN_PORT", "8776"))
     uvicorn.run(
-        create_app(data_dir=data_dir, db_path=db_path),
+        create_app(
+            data_dir=data_dir,
+            db_path=db_path,
+            loadbank_client=load_client_from_environment(),
+        ),
         host=host,
         port=port,
         log_level="info",

@@ -51,7 +51,7 @@ h1 span { color: var(--muted); font-weight: 400; }
 
 .tab-bar {
   display: grid;
-  grid-template-columns: repeat(10, minmax(132px, 1fr));
+  grid-template-columns: repeat(11, minmax(132px, 1fr));
   overflow-x: auto;
   border: 1px solid var(--rule);
   background: rgba(7, 16, 13, .94);
@@ -126,6 +126,34 @@ h1 span { color: var(--muted); font-weight: 400; }
 .usb-routing-device select { width: min(210px, 48%); font-size: 10px; }
 .usb-routing-apply { width: 100%; margin-top: 14px; }
 .usb-routing-apply:disabled { cursor: not-allowed; opacity: .5; }
+.loadbank-owner-panel, .loadbank-collection-panel { margin-bottom: 18px; }
+.loadbank-owner-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, .28fr); align-items: stretch; gap: 14px; padding: 18px 20px 0; }
+.loadbank-owner-choices { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--rule); }
+.loadbank-owner-choices legend { max-width: 100%; padding: 0 7px; color: var(--muted); font-size: 9px; line-height: 1.4; letter-spacing: .09em; text-transform: uppercase; white-space: normal; }
+.loadbank-owner-choices label { display: grid; grid-template-columns: auto 1fr; align-content: center; gap: 5px 9px; min-height: 76px; padding: 12px; border: 1px solid var(--rule); cursor: pointer; }
+.loadbank-owner-choices input { grid-row: 1 / 3; align-self: center; width: 18px; height: 18px; margin: 0; accent-color: var(--live); }
+.loadbank-owner-choices strong { font-family: var(--condensed); font-size: 18px; text-transform: uppercase; }
+.loadbank-owner-choices span { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.loadbank-owner-choices:disabled label { opacity: .52; cursor: not-allowed; }
+.loadbank-owner-form .capture-button { grid-column: auto; min-height: 100%; }
+.loadbank-endpoint { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 16px 20px; border-bottom: 1px solid var(--rule); }
+.loadbank-endpoint span { color: var(--muted); font-size: 9px; letter-spacing: .09em; text-transform: uppercase; }
+.loadbank-endpoint strong { color: var(--live); font-family: var(--condensed); font-size: 22px; }
+.loadbank-endpoint small { color: var(--muted); font-size: 9px; text-align: right; }
+.loadbank-session-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 18px 20px; }
+.loadbank-discovery-control { grid-column: span 3; display: grid; grid-template-columns: minmax(210px, .55fr) minmax(260px, 1fr); align-items: end; gap: 12px; }
+.loadbank-discovery-control .tool-button { min-height: 44px; }
+.loadbank-session-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr minmax(220px, .3fr); gap: 12px; }
+.loadbank-session-actions .capture-button { grid-column: auto; }
+.loadbank-session-actions .tool-button { border-color: var(--danger); }
+.loadbank-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.loadbank-session-list { display: grid; }
+.loadbank-session-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; min-height: 78px; padding: 14px 18px; border-bottom: 1px solid rgba(40, 65, 54, .6); }
+.loadbank-session-card:last-child { border-bottom: 0; }
+.loadbank-session-card strong, .loadbank-session-card small { display: block; }
+.loadbank-session-card strong { font-size: 12px; }
+.loadbank-session-card small { margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.loadbank-session-card a { color: var(--cream); font-size: 10px; text-decoration: none; border-bottom: 1px solid var(--rule); }
 .digital-readout { display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 30px 18px 12px; }
 .digital-readout strong { color: var(--amber); font-family: var(--condensed); font-size: clamp(76px, 10vw, 132px); font-weight: 600; line-height: .8; letter-spacing: .025em; font-variant-numeric: tabular-nums; text-shadow: 0 0 28px rgba(255, 188, 66, .16); }
 .digital-readout span { color: var(--muted); font-family: var(--condensed); font-size: 30px; }
@@ -381,7 +409,7 @@ input:not([type="checkbox"]):focus, select:focus { border-color: var(--live); bo
 footer { display: flex; justify-content: space-between; gap: 18px; color: var(--muted); font-size: 9px; line-height: 1.5; text-transform: uppercase; letter-spacing: .08em; padding: 18px 2px 0; }
 
 @media (max-width: 1050px) {
-  .tab-bar { grid-template-columns: repeat(10, minmax(122px, 1fr)); }
+  .tab-bar { grid-template-columns: repeat(11, minmax(122px, 1fr)); }
   .tab-button { min-width: 122px; }
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .can-capture-form { grid-template-columns: 1fr 1fr; }
@@ -399,6 +427,10 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .analysis-metric:nth-child(2n) { border-right: 0; }
   .analysis-metric:nth-last-child(-n + 4) { border-bottom: 1px solid var(--rule); }
   .analysis-metric:nth-last-child(-n + 2) { border-bottom: 0; }
+  .loadbank-owner-form { grid-template-columns: 1fr; }
+  .loadbank-owner-form .capture-button { min-height: 48px; }
+  .loadbank-session-form { grid-template-columns: 1fr 1fr; }
+  .loadbank-discovery-control { grid-column: 1 / -1; }
   .obd-toolbar { grid-template-columns: 1fr 1fr; }
   .obd-toolbar .capture-button, .obd-toolbar .plain-button { grid-column: auto; }
   .obd-live-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -435,7 +467,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .shell { width: min(100% - 22px, 1520px); padding-top: 24px; }
   .masthead { flex-direction: column; align-items: flex-start; }
   .status-stack { text-align: left; }
-  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(10, 112px); }
+  .tab-bar { margin-inline: -11px; padding-inline: 11px; border-left: 0; border-right: 0; grid-template-columns: repeat(11, 112px); }
   .tab-button { min-width: 112px; font-size: 10px; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
   .panel-heading > div { width: 100%; }
@@ -451,7 +483,7 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .profile-button, .profile-button:nth-child(3) { border-right: 1px solid var(--rule); }
   .profile-button:nth-child(2n) { border-right: 0; }
   .profile-button:last-child { grid-column: 1 / -1; border-right: 0; }
-  .scope-capture-form, .can-capture-form, .serial-capture-form, .sniffer-form, .modbus-scan-form { grid-template-columns: 1fr; }
+  .scope-capture-form, .can-capture-form, .serial-capture-form, .sniffer-form, .modbus-scan-form, .loadbank-session-form { grid-template-columns: 1fr; }
   .scope-label-field, .capture-button, .can-capture-form .capture-button, .serial-label, .serial-capture-form .capture-button, .sniffer-form .capture-button, .modbus-scan-form .capture-button { grid-column: 1; }
   .serial-decode-grid { grid-template-columns: 1fr; }
   .serial-decode-grid article { border-right: 0; border-bottom: 1px solid var(--rule); }
@@ -471,6 +503,11 @@ footer { display: flex; justify-content: space-between; gap: 18px; color: var(--
   .analysis-metric, .analysis-metric:nth-child(2n), .analysis-metric:nth-child(4n), .analysis-metric:nth-last-child(-n + 4), .analysis-metric:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
   .analysis-metric:last-child { border-bottom: 0; }
   .analysis-detail { grid-template-columns: 1fr; gap: 10px; }
+  .loadbank-owner-choices, .loadbank-discovery-control, .loadbank-session-actions, .loadbank-endpoint { grid-template-columns: 1fr; }
+  .loadbank-discovery-control { grid-column: 1; }
+  .loadbank-endpoint small { text-align: left; }
+  .loadbank-metrics { grid-template-columns: 1fr; }
+  .loadbank-session-card { grid-template-columns: 1fr; }
   .test-grid { grid-template-columns: 1fr; }
   .test-grid article, .test-grid article:nth-child(2n), .test-grid article:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--rule); }
   .test-grid article:last-child { border-bottom: 0; }

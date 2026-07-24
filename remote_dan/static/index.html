@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07100D">
   <title>Remote Dan Lite · Traceworks Console</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2307100D'/%3E%3Cpath d='M10 34h10l5-16 8 32 6-16h15' fill='none' stroke='%235CFF9A' stroke-width='5'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/app.css?v=obd-fault-summary-v5">
+  <link rel="stylesheet" href="/static/app.css?v=obd-fault-summary-v5-loadbank-owner-2">
 </head>
 <body>
   <div class="shell">
@@ -31,9 +31,10 @@
       <button class="tab-button" type="button" role="tab" id="tab-can" data-tab="can" aria-controls="panel-can" aria-selected="false" tabindex="-1"><span>05</span>CAN</button>
       <button class="tab-button" type="button" role="tab" id="tab-obd" data-tab="obd" aria-controls="panel-obd" aria-selected="false" tabindex="-1"><span>06</span>OBD</button>
       <button class="tab-button" type="button" role="tab" id="tab-modbus" data-tab="modbus" aria-controls="panel-modbus" aria-selected="false" tabindex="-1"><span>07</span>Modbus</button>
-      <button class="tab-button" type="button" role="tab" id="tab-tests" data-tab="tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1"><span>08</span>Tests</button>
-      <button class="tab-button" type="button" role="tab" id="tab-timeline" data-tab="timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><span>09</span>Timeline</button>
-      <button class="tab-button" type="button" role="tab" id="tab-evidence" data-tab="evidence" aria-controls="panel-evidence" aria-selected="false" tabindex="-1"><span>10</span>Evidence</button>
+      <button class="tab-button" type="button" role="tab" id="tab-load-bank" data-tab="load-bank" aria-controls="panel-load-bank" aria-selected="false" tabindex="-1"><span>08</span>Load Bank</button>
+      <button class="tab-button" type="button" role="tab" id="tab-tests" data-tab="tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1"><span>09</span>Tests</button>
+      <button class="tab-button" type="button" role="tab" id="tab-timeline" data-tab="timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><span>10</span>Timeline</button>
+      <button class="tab-button" type="button" role="tab" id="tab-evidence" data-tab="evidence" aria-controls="panel-evidence" aria-selected="false" tabindex="-1"><span>11</span>Evidence</button>
       </div>
     </nav>
 
@@ -526,9 +527,57 @@
         </section>
       </section>
 
+      <section class="tab-panel" id="panel-load-bank" role="tabpanel" aria-labelledby="tab-load-bank" data-panel="load-bank" hidden>
+        <section class="panel loadbank-owner-panel">
+          <div class="panel-heading"><div><span class="section-number">08</span><h2>Current Collection Owner</h2></div><span class="status-label planned" id="loadbank-owner-status">Collector unavailable</span></div>
+          <form id="loadbank-owner-form" class="loadbank-owner-form">
+            <fieldset class="loadbank-owner-choices" disabled>
+              <legend>Select the one system allowed to collect load-bank evidence</legend>
+              <label><input id="loadbank-owner-off" type="radio" name="loadbank-owner" value="off"> <strong>Off</strong><span>No collector owns the controller.</span></label>
+              <label><input id="loadbank-owner-rdl" type="radio" name="loadbank-owner" value="rdl"> <strong>Remote Dan Lite</strong><span>The loopback collector may poll the controller.</span></label>
+              <label><input id="loadbank-owner-windows" type="radio" name="loadbank-owner" value="windows"> <strong>Windows Workstation</strong><span>Windows owns direct Ethernet collection.</span></label>
+            </fieldset>
+            <button class="capture-button" id="loadbank-owner-apply" type="submit" disabled>Apply Collection Owner</button>
+          </form>
+          <p class="message" id="loadbank-mode-message" role="status">In Windows mode, RDL polling is disabled. Windows communicates directly over Ethernet.</p>
+        </section>
+
+        <section class="panel loadbank-collection-panel">
+          <div class="panel-heading"><div><span class="section-number">08A</span><h2>Load-bank collection</h2></div><p>Collector ownership gates all controller access</p></div>
+          <div class="loadbank-endpoint"><span>Configured direct endpoint</span><strong>192.168.1.99:502 · Unit 125</strong><small>The browser cannot change the collector URL or credentials.</small></div>
+          <form id="loadbank-session-form" class="loadbank-session-form">
+            <div class="loadbank-discovery-control">
+              <button class="tool-button" id="loadbank-discover" type="button" disabled>Local RDL Auto Detect</button>
+              <label class="field"><span>Detected controller</span><select id="loadbank-controller" required disabled><option value="">Run Local RDL Auto Detect</option></select></label>
+            </div>
+            <label class="field"><span>Duration · minutes</span><input id="loadbank-duration" type="number" min="15" max="1440" step="15" value="60" required></label>
+            <label class="field"><span>Customer</span><input id="loadbank-customer" maxlength="120" autocomplete="organization" required></label>
+            <label class="field"><span>Work order</span><input id="loadbank-work-order" maxlength="80" autocomplete="off" required></label>
+            <label class="field"><span>Generator</span><input id="loadbank-generator" maxlength="120" autocomplete="off" required></label>
+            <label class="field"><span>Technician</span><input id="loadbank-technician" maxlength="120" autocomplete="name" required></label>
+            <div class="loadbank-session-actions">
+              <button class="capture-button" id="loadbank-start" type="submit" disabled><span class="button-mark"></span>Start collection</button>
+              <button class="tool-button" id="loadbank-stop" type="button" disabled>Stop active collection</button>
+            </div>
+          </form>
+          <p class="message" id="loadbank-message" role="status">Load Bank unavailable until the server-side collector is configured.</p>
+        </section>
+
+        <div class="metric-grid loadbank-metrics">
+          <article class="panel metric"><span>Captured</span><strong id="loadbank-captured">—</strong><small>collection points</small></article>
+          <article class="panel metric"><span>Expected</span><strong id="loadbank-expected">—</strong><small>collection points</small></article>
+          <article class="panel metric"><span>Quality status</span><strong id="loadbank-quality">—</strong><small>collector assessment</small></article>
+        </div>
+
+        <section class="panel loadbank-evidence-panel">
+          <div class="panel-heading"><div><span class="section-number">08B</span><h2>Recent session evidence</h2></div><p>ZIP packages served through the RDL proxy</p></div>
+          <div id="loadbank-session-list" class="loadbank-session-list"><p class="empty-list">No load-bank sessions reported.</p></div>
+        </section>
+      </section>
+
       <section class="tab-panel" id="panel-tests" role="tabpanel" aria-labelledby="tab-tests" data-panel="tests" hidden>
         <section class="panel commissioned-panel">
-          <div class="panel-heading"><div><span class="section-number">08</span><h2>Guided tests</h2></div><span class="status-label planned">Framework ready</span></div>
+          <div class="panel-heading"><div><span class="section-number">09</span><h2>Guided tests</h2></div><span class="status-label planned">Framework ready</span></div>
           <div class="test-grid">
             <article><strong>Relative compression</strong><span>Connection → signal check → bounded capture → calculation → findings</span><small>Not commissioned</small></article>
             <article><strong>Cylinder contribution</strong><span>Shared capture engines with explicit stimulus authority</span><small>Not commissioned</small></article>
@@ -539,17 +588,17 @@
       </section>
 
       <section class="tab-panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" data-panel="timeline" hidden>
-        <section class="panel"><div class="panel-heading"><div><span class="section-number">09</span><h2>Capture timeline</h2></div><p>Newest first · shared evidence state</p></div><div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div></section>
+        <section class="panel"><div class="panel-heading"><div><span class="section-number">10</span><h2>Capture timeline</h2></div><p>Newest first · shared evidence state</p></div><div id="timeline-list" class="timeline-list"><p class="empty-list">No capture events yet.</p></div></section>
       </section>
 
       <section class="tab-panel" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence" data-panel="evidence" hidden>
-        <section class="runs panel"><div class="panel-heading"><div><span class="section-number">10</span><h2>Field Journal</h2></div><button id="refresh" class="plain-button" type="button">Refresh</button></div><div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div></section>
+        <section class="runs panel"><div class="panel-heading"><div><span class="section-number">11</span><h2>Field Journal</h2></div><button id="refresh" class="plain-button" type="button">Refresh</button></div><div id="run-list" class="run-list"><p class="empty-list">No evidence packages yet.</p></div></section>
       </section>
     </main>
 
     <footer><span>Remote Dan Lite · synchronized evidence appliance</span><span>Capture / routing / recovery remain separate failure domains</span></footer>
   </div>
   <script src="/static/can_request_gate.js?v=can-decode-v1-remediation2" defer></script>
-  <script src="/static/app.js?v=obd-fault-summary-v5" defer></script>
+  <script src="/static/app.js?v=obd-fault-summary-v5-loadbank-owner-2" defer></script>
 </body>
 </html>
